@@ -208,3 +208,10 @@ __marimo__/
 
 # Claude worktrees
 .claude/worktrees/
+
+# ── AI Marketing: campaigns data (large binary assets, never commit) ──────────
+campaigns/
+
+# ── AI Marketing: Playwright browser auth state ───────────────────────────────
+src/config/gemini_auth.json
+src/config/*_auth.json

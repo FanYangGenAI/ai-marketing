@@ -1,0 +1,26 @@
+{
+  "platform": "xiaohongshu",
+  "display_name": "小红书",
+  "content_type": "图文",
+  "specs": {
+    "image_count": { "min": 1, "max": 9, "recommended": "3-6" },
+    "image_ratio": ["3:4", "1:1"],
+    "image_size_px": {
+      "3:4": "1080x1440",
+      "1:1": "1080x1080"
+    },
+    "title_max_chars": 20,
+    "body_chars": { "min": 500, "max": 1000 },
+    "hashtags": { "min": 3, "max": 8, "strategy": "头部+长尾混合" },
+    "cover_note": "首图最重要，必须包含文字 overlay，强视觉冲击"
+  },
+  "style_guide": {
+    "tone": "口语化、真实感、生活化",
+    "avoid_words": ["最强", "第一", "无敌", "绝对", "最好", "100%"],
+    "prefer_words": ["亲测", "分享", "真实体验", "好用到哭", "强烈推荐", "种草"]
+  },
+  "publish_time": {
+    "weekday": ["18:00-22:00"],
+    "weekend": ["10:00-12:00", "20:00-22:00"]
+  }
+}
