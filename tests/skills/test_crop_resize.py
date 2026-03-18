@@ -1,9 +1,15 @@
-"""单元测试：crop_resize Skill（无需外部依赖）"""
+"""单元测试：crop-resize Skill scripts/crop_resize.py（通过 subprocess 调用 CLI）"""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
-from pathlib import Path
 from PIL import Image
-from src.skills.image_edit.crop_resize import crop_resize, PLATFORM_SIZES
+
+
+SCRIPT = Path(__file__).parent.parent.parent / "src" / "skills" / "crop-resize" / "scripts" / "crop_resize.py"
 
 
 @pytest.fixture
@@ -14,43 +20,63 @@ def sample_image(tmp_path) -> str:
     return img_path
 
 
+def run_script(*args) -> subprocess.CompletedProcess:
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+    )
+
+
 def test_center_crop_to_xiaohongshu_34(sample_image, tmp_path):
-    output = str(tmp_path / "out.jpg")
-    result = crop_resize(sample_image, output, "xiaohongshu_34", crop_mode="center")
-    assert result.width == 1080
-    assert result.height == 1440
-    assert Path(output).exists()
+    output = str(tmp_path / "out_34.jpg")
+    result = run_script("--input", sample_image, "--output", output, "--size", "xiaohongshu_34")
+    assert result.returncode == 0, result.stderr
+    assert "✅" in result.stdout
     with Image.open(output) as img:
         assert img.size == (1080, 1440)
 
 
 def test_center_crop_to_xiaohongshu_11(sample_image, tmp_path):
     output = str(tmp_path / "out_11.jpg")
-    result = crop_resize(sample_image, output, "xiaohongshu_11")
-    assert result.width == 1080
-    assert result.height == 1080
-
-
-def test_fit_resize(sample_image, tmp_path):
-    output = str(tmp_path / "out_fit.jpg")
-    result = crop_resize(sample_image, output, (400, 300), crop_mode="fit")
+    result = run_script("--input", sample_image, "--output", output, "--size", "xiaohongshu_11")
+    assert result.returncode == 0, result.stderr
     with Image.open(output) as img:
-        w, h = img.size
-        assert w <= 400 and h <= 300
+        assert img.size == (1080, 1080)
 
 
-def test_custom_tuple_size(sample_image, tmp_path):
+def test_fit_mode(sample_image, tmp_path):
+    output = str(tmp_path / "out_fit.jpg")
+    result = run_script(
+        "--input", sample_image, "--output", output, "--size", "1080x1440", "--mode", "fit"
+    )
+    assert result.returncode == 0, result.stderr
+    with Image.open(output) as img:
+        assert img.size == (1080, 1440)
+
+
+def test_custom_size(sample_image, tmp_path):
     output = str(tmp_path / "out_custom.jpg")
-    result = crop_resize(sample_image, output, (720, 960))
-    assert result.width == 720
-    assert result.height == 960
+    result = run_script("--input", sample_image, "--output", output, "--size", "720x960")
+    assert result.returncode == 0, result.stderr
+    with Image.open(output) as img:
+        assert img.size == (720, 960)
 
 
 def test_invalid_platform_key(sample_image, tmp_path):
-    with pytest.raises(ValueError, match="Unknown platform size key"):
-        crop_resize(sample_image, str(tmp_path / "x.jpg"), "unknown_platform")
+    output = str(tmp_path / "x.jpg")
+    result = run_script("--input", sample_image, "--output", output, "--size", "unknown_platform")
+    assert result.returncode != 0
+    assert "❌" in result.stderr or "Error" in result.stderr
 
 
-def test_invalid_crop_mode(sample_image, tmp_path):
-    with pytest.raises(ValueError, match="Unknown crop_mode"):
-        crop_resize(sample_image, str(tmp_path / "x.jpg"), (1080, 1440), crop_mode="stretch")
+def test_invalid_mode(sample_image, tmp_path):
+    output = str(tmp_path / "x.jpg")
+    result = run_script(
+        "--input", sample_image, "--output", output, "--size", "xiaohongshu_34", "--mode", "stretch"
+    )
+    # argparse 会直接拒绝无效的 choices
+    assert result.returncode != 0
