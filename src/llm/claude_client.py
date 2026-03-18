@@ -12,9 +12,16 @@ from .base import BaseLLMClient, LLMMessage, LLMResponse
 class ClaudeClient(BaseLLMClient):
     def __init__(self, model: str = "claude-opus-4-6"):
         self._model = model
-        self._client = anthropic.AsyncAnthropic(
-            api_key=os.environ["ANTHROPIC_API_KEY"]
+        # 优先 ANTHROPIC_API_KEY，fallback 到 Claude Code 的 OAuth token
+        api_key = (
+            os.environ.get("ANTHROPIC_API_KEY")
+            or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
         )
+        if not api_key:
+            raise EnvironmentError(
+                "未找到 Anthropic 认证信息，请设置 ANTHROPIC_API_KEY 或 CLAUDE_CODE_OAUTH_TOKEN"
+            )
+        self._client = anthropic.AsyncAnthropic(api_key=api_key)
 
     def model_name(self) -> str:
         return self._model

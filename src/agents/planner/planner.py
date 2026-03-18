@@ -126,15 +126,22 @@ class PlannerAgent(BaseAgent):
         )
 
         # ── 写入输出文件 ──────────────────────────────────────────────────────
-        self._write_output(output_path, result.final_synthesis)
+        self._write_output(output_path, result.final_output)
 
         # 提取今日主题作为摘要
-        summary = self._extract_theme(result.final_synthesis, date_str)
+        summary = self._extract_theme(result.final_output, date_str)
+
+        # 判断是否提前收敛（Round 2 开始存在 agree 信息）
+        reached_agreement = (
+            result.rounds > 1
+            and len(result.opinions) > 1
+            and all(op.agree for op in result.opinions[-1])
+        )
 
         return AgentOutput(
             output_path=output_path,
             summary=summary,
-            data={"rounds": result.rounds_completed, "agreement": result.reached_agreement},
+            data={"rounds": result.rounds, "agreement": reached_agreement},
         )
 
     # ── 私有方法 ──────────────────────────────────────────────────────────────

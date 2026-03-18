@@ -35,6 +35,10 @@ if hasattr(sys.stderr, "reconfigure"):
 # 确保项目根目录在 sys.path
 sys.path.insert(0, str(Path(__file__).parent))
 
+# 加载 .env（override=True 确保 .env 的值覆盖系统中的同名空变量）
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 from src.orchestrator.pipeline import Pipeline, STEPS
 
 
