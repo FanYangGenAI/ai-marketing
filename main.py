@@ -26,6 +26,12 @@ import sys
 from datetime import date
 from pathlib import Path
 
+# Windows UTF-8 兼容：确保 stdout/stderr 可以输出中文和 emoji
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # 确保项目根目录在 sys.path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -80,13 +86,17 @@ def parse_args() -> argparse.Namespace:
 async def main() -> None:
     args = parse_args()
 
-    # 日志配置
+    # 日志配置（强制 UTF-8，兼容 Windows 控制台）
+    import io
     level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
+    handler = logging.StreamHandler(
+        stream=io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     )
+    handler.setFormatter(logging.Formatter(
+        fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    ))
+    logging.basicConfig(level=level, handlers=[handler])
     log = logging.getLogger("main")
 
     # 解析日期

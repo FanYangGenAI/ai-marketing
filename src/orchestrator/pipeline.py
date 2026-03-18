@@ -17,15 +17,7 @@ import logging
 from datetime import date
 from pathlib import Path
 
-from src.agents.audit.audit import AuditAgent
 from src.agents.base import AgentContext, AgentOutput
-from src.agents.creator.creator import CreatorAgent
-from src.agents.director.director import DirectorAgent
-from src.agents.planner.planner import PlannerAgent
-from src.agents.scriptwriter.scriptwriter import ScriptwriterAgent
-from src.llm.claude_client import ClaudeClient
-from src.llm.gemini_client import GeminiClient
-from src.llm.openai_client import OpenAIClient
 
 log = logging.getLogger(__name__)
 
@@ -53,17 +45,33 @@ class Pipeline:
         self.campaigns_root = campaigns_root
         self.platform = platform
 
-        # 初始化 LLM 客户端（每个都从环境变量读取 API Key）
+        # LLM 客户端与 Agent 延迟初始化（仅在真正 run() 时才 import SDK）
+        self._agents_initialized = False
+
+    def _init_agents(self) -> None:
+        """首次运行时延迟初始化所有 LLM 客户端和 Agent。"""
+        if self._agents_initialized:
+            return
+        from src.llm.claude_client import ClaudeClient
+        from src.llm.gemini_client import GeminiClient
+        from src.llm.openai_client import OpenAIClient
+        from src.agents.audit.audit import AuditAgent
+        from src.agents.creator.creator import CreatorAgent
+        from src.agents.director.director import DirectorAgent
+        from src.agents.planner.planner import PlannerAgent
+        from src.agents.scriptwriter.scriptwriter import ScriptwriterAgent
+
         self._claude = ClaudeClient()
         self._openai = OpenAIClient()
         self._gemini = GeminiClient()
 
-        # 初始化 Agents
         self._planner = PlannerAgent(self._gemini, self._claude, self._openai)
-        self._scriptwriter = ScriptwriterAgent(self._openai, self._gemini, self._claude, platform)
-        self._director = DirectorAgent(self._gemini, platform)
-        self._creator = CreatorAgent(self._claude, platform)
-        self._audit = AuditAgent(self._openai, self._claude, platform)
+        self._scriptwriter = ScriptwriterAgent(self._openai, self._gemini, self._claude, self.platform)
+        self._director = DirectorAgent(self._gemini, self.platform)
+        self._creator = CreatorAgent(self._claude, self.platform)
+        self._audit = AuditAgent(self._openai, self._claude, self.platform)
+
+        self._agents_initialized = True
 
     async def run(
         self,
@@ -87,6 +95,10 @@ class Pipeline:
         campaign_root = self.campaigns_root / self.product_name
         daily_folder = campaign_root / "daily" / run_date.strftime("%Y-%m-%d")
         daily_folder.mkdir(parents=True, exist_ok=True)
+
+        # dry_run 不需要真实 SDK，跳过 Agent 初始化
+        if not dry_run:
+            self._init_agents()
 
         context = AgentContext(
             campaign_root=campaign_root,
@@ -173,11 +185,106 @@ class Pipeline:
 
     @staticmethod
     def _print_dry_run(context: AgentContext, steps: list[str]) -> None:
-        print(f"\n{'='*60}")
-        print(f"[DRY RUN] Pipeline 执行计划")
-        print(f"  产品：{context.product_name}")
-        print(f"  日期：{context.run_date}")
-        print(f"  日期目录：{context.daily_folder}")
-        print(f"  PRD：{context.prd_path or '未提供'}")
-        print(f"  待执行阶段：{' → '.join(steps)}")
-        print(f"{'='*60}\n")
+        W = 62
+        div = "─" * W
+
+        print(f"\n╔{'═'*W}╗")
+        print(f"║{'  [DRY RUN] Pipeline 执行计划':^{W}}║")
+        print(f"╚{'═'*W}╝")
+
+        # ── 基本信息 ──────────────────────────────────────────────────────────
+        print(f"\n{'▌ 基本信息':}")
+        print(f"  产品名称    {context.product_name}")
+        print(f"  执行日期    {context.run_date}")
+        print(f"  发布平台    xiaohongshu")
+        print(f"  日期目录    {context.daily_folder}")
+
+        # ── PRD 摘要 ──────────────────────────────────────────────────────────
+        print(f"\n▌ PRD")
+        if context.prd_path and context.prd_path.exists():
+            prd_text = context.prd_path.read_text(encoding="utf-8", errors="replace")
+            lines = [l.strip() for l in prd_text.splitlines() if l.strip()]
+            print(f"  文件：{context.prd_path.name}（{len(prd_text)} 字）")
+            # 打印前 5 行非空内容作为摘要
+            for line in lines[:5]:
+                print(f"  │ {line[:70]}")
+            if len(lines) > 5:
+                print(f"  │ ...（共 {len(lines)} 行）")
+        else:
+            print(f"  ⚠️  未提供 PRD 文件")
+
+        # ── 阶段详情 ──────────────────────────────────────────────────────────
+        _STEP_DETAIL = {
+            "planner": {
+                "icon": "🧠",
+                "label": "Planner — 每日营销策划",
+                "agents": ["PlannerA/Gemini（热点搜索）", "PlannerB/Claude（产品亮点）", "PlannerC/GPT-4o（用户洞察）"],
+                "mechanism": "Debate → Synthesize（最多 3 轮）",
+                "output": "{daily}/plan/daily_marketing_plan.md",
+            },
+            "scriptwriter": {
+                "icon": "✍️",
+                "label": "Scriptwriter — 文案创作",
+                "agents": ["ScriptwriterA/GPT-4o（叙事结构）", "ScriptwriterB/Gemini（视觉指令）", "ScriptwriterC/GPT-4o（口语文案）"],
+                "mechanism": "Debate → Synthesize（最多 3 轮）",
+                "output": "{daily}/script/daily_marketing_script.md",
+            },
+            "director": {
+                "icon": "🎬",
+                "label": "Director — 素材编排",
+                "agents": ["Director/Gemini（规划 task_list）"],
+                "mechanism": "LLM 规划 → 调用 Skills（imagegen / screenshot / crop / overlay / mask）",
+                "output": "{daily}/assets/ + director_task_result.json",
+            },
+            "creator": {
+                "icon": "📦",
+                "label": "Creator — 物料组装",
+                "agents": ["Creator/Claude（组装发布包）"],
+                "mechanism": "文案 + 素材路径 → post_package.json",
+                "output": "{daily}/output/draft/post_package.json",
+            },
+            "audit": {
+                "icon": "🔍",
+                "label": "Audit — 合规审核",
+                "agents": ["PlatformAuditor/GPT-4o", "ContentAuditor/Claude", "SafetyAuditor/Claude"],
+                "mechanism": "三 Auditor 并行 → 全部通过才写入 final/",
+                "output": "{daily}/output/audit_result.json → final/（通过时）",
+            },
+        }
+
+        print(f"\n▌ 待执行阶段（{len(steps)} 个）\n")
+        for i, step in enumerate(steps, 1):
+            d = _STEP_DETAIL.get(step, {})
+            icon = d.get("icon", "▶")
+            label = d.get("label", step)
+            print(f"  {i}. {icon}  {label}")
+            if d.get("agents"):
+                for a in d["agents"]:
+                    print(f"       · {a}")
+            if d.get("mechanism"):
+                print(f"       ⚙  {d['mechanism']}")
+            if d.get("output"):
+                print(f"       → {d['output']}")
+            if i < len(steps):
+                print(f"       {'↓':>5}")
+
+        # ── 预计产出 ──────────────────────────────────────────────────────────
+        daily_str = context.run_date.strftime("%Y-%m-%d")
+        base = f"campaigns/{context.product_name}/daily/{daily_str}"
+        print(f"\n▌ 预计产出文件")
+        outputs = [
+            f"{base}/plan/daily_marketing_plan.md",
+            f"{base}/script/daily_marketing_script.md",
+            f"{base}/assets/raw/          （原始素材）",
+            f"{base}/assets/processed/    （处理后素材）",
+            f"{base}/director_task_result.json",
+            f"{base}/output/draft/post_package.json",
+            f"{base}/output/audit_result.json",
+            f"{base}/output/final/         （审核通过后）",
+        ]
+        for o in outputs:
+            print(f"  {o}")
+
+        print(f"\n  运行真实 Pipeline：")
+        print(f"  python main.py --product {context.product_name} --prd {context.prd_path or 'docs/prd.md'}")
+        print(f"\n{'─'*W}\n")
