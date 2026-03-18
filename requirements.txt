@@ -1,7 +1,7 @@
 # ── LLM Clients ──────────────────────────────────────────────────────────────
 anthropic>=0.40.0
 openai>=1.50.0
-google-generativeai>=0.8.0
+google-genai>=0.8.0          # 新 SDK，替代已弃用的 google-generativeai（2025-11-30 停止维护）
 
 # ── Browser Automation (Gemini Web Skill / Screenshot Skill) ─────────────────
 playwright>=1.48.0
