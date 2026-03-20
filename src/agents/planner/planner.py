@@ -85,6 +85,7 @@ class PlannerAgent(BaseAgent):
 
     async def run(self, context: AgentContext) -> AgentOutput:
         output_path = context.subdir("plan") / "daily_marketing_plan.md"
+        log_path = context.subdir("plan") / "debate_raw.md"
 
         # ── 读取上下文资料 ────────────────────────────────────────────────────
         prd_text = self._read_optional(context.prd_path)
@@ -123,6 +124,7 @@ class PlannerAgent(BaseAgent):
             context=shared_context,
             moderator_system=moderator_system,
             max_rounds=3,
+            log_path=log_path,
         )
 
         # ── 写入输出文件 ──────────────────────────────────────────────────────

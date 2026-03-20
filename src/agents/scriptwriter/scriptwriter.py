@@ -121,21 +121,24 @@ class ScriptwriterAgent(BaseAgent):
         moderator_system = _MODERATOR_SYSTEM.replace("{date}", date_str)
 
         # ── Debate→Synthesize ─────────────────────────────────────────────────
+        log_path = context.subdir("script") / "debate_raw.md"
+
         result = await debate_and_synthesize(
             agents=[sw_a, sw_b, sw_c],
             moderator_client=self.llm_client,
             context=shared_context,
             moderator_system=moderator_system,
             max_rounds=3,
+            log_path=log_path,
         )
 
-        self._write_output(output_path, result.final_synthesis)
+        self._write_output(output_path, result.final_output)
 
-        summary = self._extract_title(result.final_synthesis)
+        summary = self._extract_title(result.final_output)
         return AgentOutput(
             output_path=output_path,
             summary=summary,
-            data={"rounds": result.rounds_completed},
+            data={"rounds": result.rounds},
         )
 
     @staticmethod

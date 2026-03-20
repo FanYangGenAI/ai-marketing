@@ -12,6 +12,7 @@ Debate → Synthesize 通用收敛机制。
 import asyncio
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 from src.llm.base import BaseLLMClient, LLMMessage
 
@@ -54,6 +55,7 @@ async def debate_and_synthesize(
     context: str,
     moderator_system: str = "",
     max_rounds: int = MAX_ROUNDS,
+    log_path: Path | None = None,
 ) -> DebateResult:
     """
     执行多 agent 辩论并由 Moderator 收敛输出。
@@ -91,10 +93,37 @@ async def debate_and_synthesize(
         opinions = await asyncio.gather(*tasks)
         all_round_opinions.append(list(opinions))
 
-        # 检查是否所有 agent 都表示同意 → 提前收敛
-        if round_num > 1 and all(op.agree for op in opinions):
-            logger.info(f"[Debate] All agents agree. Converging after round {round_num}.")
-            break
+        # 打印本轮各 Agent 输出
+        for op in opinions:
+            logger.debug(
+                "\n%s\n[Round %d] %s (%s)\n%s\n%s",
+                "─" * 60, round_num, op.agent_name, op.model,
+                op.content,
+                "─" * 60,
+            )
+
+        # 写入原始输出日志
+        if log_path:
+            _write_round_log(log_path, round_num, list(opinions))
+
+        # Round 1 后：让 Moderator 判断是否需要继续讨论
+        if round_num == 1 and max_rounds > 1:
+            should_continue = await _moderator_should_continue(
+                moderator_client, context, list(opinions), log_path=log_path
+            )
+            if not should_continue:
+                logger.info("[Debate] Moderator: opinions convergent after Round 1, skipping further rounds.")
+                break
+
+        # Round 2+ 超过半数同意 → 提前收敛
+        if round_num > 1:
+            agree_count = sum(op.agree for op in opinions)
+            if agree_count > len(opinions) / 2:
+                logger.info(
+                    f"[Debate] Majority agree ({agree_count}/{len(opinions)}). "
+                    f"Converging after round {round_num}."
+                )
+                break
 
         # 生成本轮小结（供下一轮参考）
         current_summary = _format_opinions(opinions, round_num)
@@ -105,6 +134,7 @@ async def debate_and_synthesize(
         context,
         all_round_opinions,
         moderator_system,
+        log_path=log_path,
     )
 
     return DebateResult(
@@ -126,7 +156,6 @@ async def _agent_speak_round1(agent: DebateAgent, context: str) -> AgentOpinion:
     response = await agent.client.chat(
         messages=[LLMMessage(role="user", content=context)],
         system=system,
-        max_tokens=1024,
     )
     return AgentOpinion(
         agent_name=agent.name,
@@ -159,7 +188,7 @@ async def _agent_speak_round2(
     response = await agent.client.chat(
         messages=[LLMMessage(role="user", content=user_msg)],
         system=system,
-        max_tokens=1024,
+        max_tokens=8192,  # thinking 模式下需要足够预算，确保末尾"同意/不同意"不被截断
     )
     agree = response.content.strip().endswith("同意")
     return AgentOpinion(
@@ -175,6 +204,7 @@ async def _moderator_synthesize(
     context: str,
     all_opinions: list[list[AgentOpinion]],
     system: str,
+    log_path: Path | None = None,
 ) -> str:
     """Moderator 综合所有轮次发言，输出最终结论。"""
     opinions_text = ""
@@ -192,11 +222,21 @@ async def _moderator_synthesize(
         f"各方讨论记录：\n{opinions_text}\n\n"
         "请综合以上所有观点，输出最终结论（直接给出结果，无需解释讨论过程）。"
     )
+    logger.debug(
+        "\n%s\n[Moderator 输入]\n系统提示:\n%s\n\n用户消息:\n%s\n%s",
+        "=" * 60, system or default_system, user_msg, "=" * 60,
+    )
     response = await client.chat(
         messages=[LLMMessage(role="user", content=user_msg)],
         system=system or default_system,
         max_tokens=4096,
     )
+    logger.debug(
+        "\n%s\n[Moderator 输出]\n%s\n%s",
+        "=" * 60, response.content, "=" * 60,
+    )
+    if log_path:
+        _write_moderator_log(log_path, system or default_system, user_msg, response.content)
     return response.content
 
 
@@ -206,3 +246,79 @@ def _format_opinions(opinions: list[AgentOpinion], round_num: int) -> str:
     for op in opinions:
         lines.append(f"{op.agent_name}: {op.content[:200]}...")
     return "\n".join(lines)
+
+
+async def _moderator_should_continue(
+    client: BaseLLMClient,
+    context: str,
+    opinions: list[AgentOpinion],
+    log_path: Path | None = None,
+) -> bool:
+    """Round 1 后，让 Moderator 快速判断是否需要继续讨论。"""
+    opinions_text = "\n\n".join(
+        f"【{op.agent_name}】\n{op.content}" for op in opinions
+    )
+    system = (
+        "你是讨论主持人。请判断各方 Round 1 观点是否已充分互补、方向一致，"
+        "可以直接综合出结论，无需进一步讨论。\n"
+        "只需回答：收敛 或 继续（仅此二字）。"
+    )
+    user_msg = f"各方观点：\n{opinions_text}"
+    response = await client.chat(
+        messages=[LLMMessage(role="user", content=user_msg)],
+        system=system,
+        max_tokens=1024,  # thinking 模式需要足够 token 预算，实际回复只有 2 字
+    )
+    decision = response.content.strip()
+    if not decision:
+        logger.warning("[Debate] Moderator convergence check returned empty response, defaulting to 继续")
+        decision = "继续"
+    logger.info(f"[Debate] Moderator convergence check → {decision!r}")
+    should_continue = not decision.startswith("收敛")
+    if log_path:
+        _write_convergence_log(log_path, system, user_msg, decision, should_continue)
+    return should_continue
+
+
+def _write_round_log(log_path: Path, round_num: int, opinions: list[AgentOpinion]) -> None:
+    """将本轮原始输出追加写入日志文件。"""
+    mode = "w" if round_num == 1 else "a"
+    with open(log_path, mode, encoding="utf-8") as f:
+        if round_num == 1:
+            f.write("# Debate 原始输出日志\n\n")
+        f.write(f"## Round {round_num}\n\n")
+        for op in opinions:
+            f.write(f"### {op.agent_name}  `{op.model}`\n\n")
+            f.write(op.content)
+            f.write("\n\n")
+            if round_num > 1:
+                f.write(f"> agree={op.agree}\n\n")
+            f.write("---\n\n")
+
+
+def _write_convergence_log(
+    log_path: Path, system: str, user_msg: str, decision: str, should_continue: bool
+) -> None:
+    """将 Round 1 后的收敛判断写入日志文件。"""
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write("## Moderator 收敛判断（Round 1 后）\n\n")
+        f.write("### 系统提示\n\n")
+        f.write(system)
+        f.write("\n\n### 用户消息\n\n")
+        f.write(user_msg)
+        f.write("\n\n### 判断结果\n\n")
+        f.write(f"> **{decision}** → {'继续讨论' if should_continue else '提前收敛，跳过后续轮次'}\n\n")
+        f.write("---\n\n")
+
+
+def _write_moderator_log(log_path: Path, system: str, user_msg: str, output: str) -> None:
+    """将 Moderator 输入输出追加写入日志文件。"""
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write("## Moderator\n\n")
+        f.write("### 系统提示\n\n")
+        f.write(system)
+        f.write("\n\n### 用户消息\n\n")
+        f.write(user_msg)
+        f.write("\n\n### 输出\n\n")
+        f.write(output)
+        f.write("\n")

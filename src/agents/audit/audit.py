@@ -121,11 +121,19 @@ class AuditAgent(BaseAgent):
 {platform_spec}"""
 
         # ── 三个 Auditor 并行执行 ─────────────────────────────────────────────
-        results = await asyncio.gather(
+        raw_results = await asyncio.gather(
             self._audit(self._openai, _PLATFORM_AUDITOR_SYSTEM, audit_input),
             self._audit(self.llm_client, _CONTENT_AUDITOR_SYSTEM, audit_input),
             self._audit(self.llm_client, _SAFETY_AUDITOR_SYSTEM, audit_input),
         )
+        auditor_names = ["PlatformAuditor", "ContentAuditor", "SafetyAuditor"]
+        raw_contents = [raw for raw, _ in raw_results]
+        results = [parsed for _, parsed in raw_results]
+
+        # ── 写入原始输出日志 ──────────────────────────────────────────────────
+        log_path = context.daily_folder / "output" / "audit_raw.md"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._write_audit_raw_log(log_path, auditor_names, raw_contents, audit_input)
 
         # ── 汇总结果 ──────────────────────────────────────────────────────────
         all_passed = all(r.get("passed", False) for r in results)
@@ -162,8 +170,8 @@ class AuditAgent(BaseAgent):
 
     async def _audit(
         self, client: BaseLLMClient, system: str, content: str
-    ) -> dict:
-        """调用单个 Auditor，解析 JSON 结果。"""
+    ) -> tuple[str, dict]:
+        """调用单个 Auditor，返回 (原始响应, 解析后 JSON)。"""
         messages = [LLMMessage(role="user", content=content)]
         try:
             response = await client.chat(
@@ -172,14 +180,33 @@ class AuditAgent(BaseAgent):
                 max_tokens=2048,
                 temperature=0.1,
             )
-            return self._parse_json(response.content)
+            return response.content, self._parse_json(response.content)
         except Exception as e:
-            return {
+            error_msg = f"Auditor 执行异常: {e}"
+            return error_msg, {
                 "auditor": "Unknown",
                 "passed": False,
-                "issues": [f"Auditor 执行异常: {e}"],
+                "issues": [error_msg],
                 "suggestions": [],
             }
+
+    @staticmethod
+    def _write_audit_raw_log(
+        log_path: Path,
+        auditor_names: list[str],
+        raw_contents: list[str],
+        audit_input: str,
+    ) -> None:
+        """将各 Auditor 的原始输出写入 audit_raw.md。"""
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write("# Audit 原始输出日志\n\n")
+            f.write("## 审核输入\n\n")
+            f.write(audit_input)
+            f.write("\n\n---\n\n")
+            for name, raw in zip(auditor_names, raw_contents):
+                f.write(f"## {name}\n\n")
+                f.write(raw)
+                f.write("\n\n---\n\n")
 
     @staticmethod
     def _parse_json(content: str) -> dict:
