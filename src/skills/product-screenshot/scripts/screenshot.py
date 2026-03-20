@@ -25,6 +25,11 @@ import json
 import sys
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from playwright.async_api import Page, async_playwright
 
 
@@ -112,7 +117,7 @@ async def take_screenshot(
             await asyncio.sleep(1)
             w, h = await _execute_actions(page, actions, base_url, output)
         else:
-            await page.goto(url, wait_until="networkidle")
+            await page.goto(url or base_url, wait_until="networkidle")
 
             if wait_for:
                 await page.wait_for_selector(wait_for, timeout=15000)

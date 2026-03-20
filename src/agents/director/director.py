@@ -23,10 +23,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from src.agents.base import AgentContext, AgentOutput, BaseAgent
 from src.llm.base import BaseLLMClient, LLMMessage
@@ -274,14 +277,10 @@ class DirectorAgent(BaseAgent):
         actions = task.get("actions")
         base_url = __import__("os").environ.get("PRODUCT_LOGIN_URL", "")
 
-        # 检查 auth state
+        # 确保 auth state 存在（不存在则自动调用 product-login Skill 登录）
         auth_state_path = campaign_root / "config" / f"auth_state_{account}.json"
         if not auth_state_path.exists():
-            raise RuntimeError(
-                f"未找到 auth state：{auth_state_path}\n"
-                f"请先运行：python src/skills/product-screenshot/scripts/setup_auth.py "
-                f"--account {account} --product {campaign_root.name}"
-            )
+            await self._run_login(account, auth_state_path, campaign_root)
 
         cmd = [
             sys.executable,
@@ -307,6 +306,32 @@ class DirectorAgent(BaseAgent):
         if proc.returncode != 0:
             raise RuntimeError(f"screenshot 失败: {stderr.decode('utf-8', errors='replace')}")
         return output
+
+    async def _run_login(self, account: str, auth_state_path: Path, campaign_root: Path) -> None:
+        """调用 product-login Skill 登录并保存 auth state。"""
+        login_config = campaign_root / "config" / "login_config.json"
+        cmd = [
+            sys.executable,
+            "src/skills/product-login/scripts/login.py",
+            "--account", account,
+            "--auth-state", str(auth_state_path),
+        ]
+        if login_config.exists():
+            cmd += ["--login-config", str(login_config)]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={**__import__("os").environ, "PYTHONIOENCODING": "utf-8"},
+        )
+        stdout, stderr = await proc.communicate()
+        out = stdout.decode("utf-8", errors="replace")
+        err = stderr.decode("utf-8", errors="replace")
+        if out:
+            logger.info(out.strip())
+        if proc.returncode != 0:
+            raise RuntimeError(f"product-login 失败（account={account}）:\n{err}")
 
     @staticmethod
     def _resolve_reuse(task: dict, asset_lib: AssetLibrary) -> Path:
