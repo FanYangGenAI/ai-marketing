@@ -126,25 +126,34 @@ async def login(
         await page.locator(pass_sel).first.fill(password)
         await page.locator(submit_sel).first.click()
 
-        # ── 等待登录成功 ──────────────────────────────────────────────────────
-        # 策略1：等待密码框消失（表单被卸载 = SPA 进入了已登录页面）
-        # 策略2：等待 URL 发生变化
-        # 策略3：超时兜底（等 3 秒后截图确认）
+        # ── 等待登录成功（等 localStorage token 写入）────────────────────────
+        # 策略1：等待 localStorage['auth-storage'].state.isAuthenticated === true
+        # 策略2：回退 — 等待密码框消失
+        # 策略3：兜底 — 截图确认
         print("[product-login] 等待登录完成...")
         try:
-            await page.wait_for_selector(pass_sel, state="hidden", timeout=10000)
-            print("[product-login] 登录表单已消失 → 登录成功")
+            await page.wait_for_function(
+                """() => {
+                    const s = localStorage.getItem('auth-storage');
+                    if (!s) return false;
+                    try {
+                        const d = JSON.parse(s);
+                        return d.state && d.state.isAuthenticated === true && !!d.state.token;
+                    } catch (e) { return false; }
+                }""",
+                timeout=15000,
+            )
+            print("[product-login] localStorage token 已写入 → 登录成功")
         except Exception:
-            # 表单没消失，再试 URL 变化
+            # 回退：等密码框消失
             try:
-                await page.wait_for_url(lambda url: url != login_url, timeout=5000)
-                print(f"[product-login] URL 跳转 → 登录成功：{page.url}")
+                await page.wait_for_selector(pass_sel, state="hidden", timeout=10000)
+                print("[product-login] 登录表单已消失 → 登录成功（回退策略）")
             except Exception:
-                # 兜底：等 3 秒，截图供调试
+                # 兜底：截图供调试
                 await asyncio.sleep(3)
                 debug_shot = out.parent / "login_debug.png"
                 await page.screenshot(path=str(debug_shot))
-                # 判断是否还在登录页（密码框仍可见 = 登录失败）
                 still_on_login = await page.locator(pass_sel).first.is_visible()
                 if still_on_login:
                     raise RuntimeError(
