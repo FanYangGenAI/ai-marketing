@@ -45,15 +45,33 @@ task_list 中每个任务的格式如下：
   "aspect_ratio": "3:4",
   "source": "generate" | "screenshot" | "reuse",
   "reuse_asset_id": "asset_xxx（仅 source=reuse 时填写）",
-  "screenshot_url": "https://...（仅 source=screenshot 时填写）",
+  "account": "zh" | "en" | null,
+  "actions": [...] | null,
   "text_overlay": {"text": "...", "position": "top|bottom"} | null,
   "privacy_mask": [{"x": 0, "y": 0, "w": 100, "h": 50}] | null
 }
 
 source 选择规则：
-- 如果图片是产品界面截图 → screenshot
+- 如果图片是产品界面截图 → screenshot（需填写 account 和 actions）
 - 如果 Asset Library 已有相似素材 → reuse（并填写 reuse_asset_id）
 - 其他情况 → generate（调用 AI 图像生成）
+
+account 选择规则（仅 source=screenshot 时有效）：
+- 内容面向中文用户 / 展示中文界面 → "zh"
+- 内容面向英文用户 / 展示英文界面 → "en"
+
+actions 格式（描述截图前需要执行的操作序列）：
+[
+  {"type": "navigate", "url": "/path/to/page"},
+  {"type": "click", "selector": "CSS选择器"},
+  {"type": "fill", "selector": "CSS选择器", "value": "填入内容"},
+  {"type": "wait_for", "selector": "CSS选择器"},
+  {"type": "wait_ms", "ms": 1000},
+  {"type": "screenshot", "selector": "截图区域CSS选择器（省略则全页）"}
+]
+
+注意：如果图片包含中文文字，请不要在 image_prompt 中包含中文文字内容，
+而是用 text_overlay 字段叠加，避免 AI 生成模型的中文字体渲染问题。
 
 请只输出 JSON 数组，不要有其他内容。"""
 
@@ -73,6 +91,7 @@ class DirectorAgent(BaseAgent):
 
     async def run(self, context: AgentContext) -> AgentOutput:
         result_path = context.daily_folder / "director_task_result.json"
+        log_path = context.daily_folder / "director_raw.md"
         raw_dir = context.subdir("assets", "raw")
         processed_dir = context.subdir("assets", "processed")
 
@@ -85,13 +104,15 @@ class DirectorAgent(BaseAgent):
         asset_summary = self._build_asset_summary(asset_lib)
 
         # ── 调用 LLM 规划 task_list ──────────────────────────────────────────
-        task_list = await self._plan_tasks(script_text, asset_summary)
+        task_list, llm_raw = await self._plan_tasks(script_text, asset_summary)
+        self._write_plan_log(log_path, script_text, asset_summary, llm_raw, task_list)
 
         # ── 执行每个任务 ──────────────────────────────────────────────────────
         executed: list[dict] = []
         for task in task_list:
-            result = await self._execute_task(task, raw_dir, processed_dir, asset_lib, context)
+            result = await self._execute_task(task, raw_dir, processed_dir, asset_lib, context.campaign_root)
             executed.append(result)
+            self._append_task_log(log_path, result)
 
         # ── 写入结果 ──────────────────────────────────────────────────────────
         self._write_json(result_path, executed)
@@ -107,8 +128,8 @@ class DirectorAgent(BaseAgent):
 
     # ── 规划 ─────────────────────────────────────────────────────────────────
 
-    async def _plan_tasks(self, script_text: str, asset_summary: str) -> list[dict]:
-        """调用 LLM 解析脚本，输出 task_list JSON。"""
+    async def _plan_tasks(self, script_text: str, asset_summary: str) -> tuple[list[dict], str]:
+        """调用 LLM 解析脚本，输出 task_list JSON。返回 (task_list, 原始响应)。"""
         user_msg = f"""## 营销脚本\n{script_text}
 
 ## Asset Library 现有素材摘要\n{asset_summary}
@@ -123,7 +144,7 @@ class DirectorAgent(BaseAgent):
             temperature=0.3,
         )
 
-        return self._parse_task_list(response.content)
+        return self._parse_task_list(response.content), response.content
 
     @staticmethod
     def _parse_task_list(content: str) -> list[dict]:
@@ -153,7 +174,7 @@ class DirectorAgent(BaseAgent):
         raw_dir: Path,
         processed_dir: Path,
         asset_lib: AssetLibrary,
-        context: AgentContext,
+        campaign_root: Path,
     ) -> dict:
         task_id = task.get("id", "img_unknown")
         source = task.get("source", "generate")
@@ -165,7 +186,7 @@ class DirectorAgent(BaseAgent):
             if source == "reuse":
                 raw_path = self._resolve_reuse(task, asset_lib)
             elif source == "screenshot":
-                raw_path = await self._run_screenshot(task, raw_dir)
+                raw_path = await self._run_screenshot(task, raw_dir, context.campaign_root)
             else:  # generate
                 raw_path = await self._run_imagegen(task, raw_dir)
 
@@ -208,7 +229,7 @@ class DirectorAgent(BaseAgent):
                 current_path = masked_path
 
             # Step 5：入库
-            asset_id = asset_lib.add(
+            record = asset_lib.add(
                 file_path=current_path,
                 source=source,
                 prompt=task.get("image_prompt", ""),
@@ -220,7 +241,7 @@ class DirectorAgent(BaseAgent):
 
             result["success"] = True
             result["final_path"] = str(current_path)
-            result["asset_id"] = asset_id
+            result["asset_id"] = record.id
 
         except Exception as e:
             result["error"] = str(e)
@@ -247,16 +268,37 @@ class DirectorAgent(BaseAgent):
             raise RuntimeError(f"imagegen 失败: {stderr.decode('utf-8', errors='replace')}")
         return output
 
-    async def _run_screenshot(self, task: dict, raw_dir: Path) -> Path:
-        url = task.get("screenshot_url", "")
-        if not url:
-            raise ValueError(f"screenshot 任务缺少 screenshot_url: {task.get('id')}")
+    async def _run_screenshot(self, task: dict, raw_dir: Path, campaign_root: Path) -> Path:
         output = raw_dir / f"{task['id']}_raw.png"
-        proc = await asyncio.create_subprocess_exec(
+        account = task.get("account") or "zh"
+        actions = task.get("actions")
+        base_url = __import__("os").environ.get("PRODUCT_LOGIN_URL", "")
+
+        # 检查 auth state
+        auth_state_path = campaign_root / "config" / f"auth_state_{account}.json"
+        if not auth_state_path.exists():
+            raise RuntimeError(
+                f"未找到 auth state：{auth_state_path}\n"
+                f"请先运行：python src/skills/product-screenshot/scripts/setup_auth.py "
+                f"--account {account} --product {campaign_root.name}"
+            )
+
+        cmd = [
             sys.executable,
             "src/skills/product-screenshot/scripts/screenshot.py",
-            "--url", url,
             "--output", str(output),
+            "--auth-state", str(auth_state_path),
+            "--base-url", base_url,
+        ]
+
+        if actions:
+            cmd += ["--actions", json.dumps(actions, ensure_ascii=False)]
+        else:
+            url = task.get("screenshot_url", base_url)
+            cmd += ["--url", url]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env={**__import__("os").environ, "PYTHONIOENCODING": "utf-8"},
@@ -269,10 +311,9 @@ class DirectorAgent(BaseAgent):
     @staticmethod
     def _resolve_reuse(task: dict, asset_lib: AssetLibrary) -> Path:
         asset_id = task.get("reuse_asset_id", "")
-        assets = asset_lib.index.get("assets", [])
-        for a in assets:
-            if a["id"] == asset_id:
-                return Path(asset_lib.root) / a["file"]
+        record = asset_lib.get_by_id(asset_id)
+        if record:
+            return Path(asset_lib.get_full_path(record))
         raise FileNotFoundError(f"Asset Library 中未找到 asset_id: {asset_id}")
 
     @staticmethod
@@ -302,13 +343,55 @@ class DirectorAgent(BaseAgent):
 
     @staticmethod
     def _build_asset_summary(asset_lib: AssetLibrary) -> str:
-        assets = asset_lib.index.get("assets", [])
+        assets = asset_lib._index.assets
         if not assets:
             return "（Asset Library 暂无历史素材）"
         lines = [f"现有 {len(assets)} 个素材："]
         for a in assets[:20]:  # 最多展示 20 个
             lines.append(
-                f"- [{a['id']}] {a.get('asset_type', 'image')} "
-                f"tags={a.get('tags', [])} prompt=\"{a.get('prompt', '')[:60]}\""
+                f"- [{a.id}] {a.type} tags={a.tags} prompt=\"{a.prompt[:60]}\""
             )
         return "\n".join(lines)
+
+    @staticmethod
+    def _write_plan_log(
+        log_path: Path,
+        script_text: str,
+        asset_summary: str,
+        llm_raw: str,
+        task_list: list[dict],
+    ) -> None:
+        """写入 LLM 规划阶段的输入输出。"""
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write("# Director 原始输出日志\n\n")
+            f.write("## 规划阶段\n\n")
+            f.write("### 输入：脚本\n\n")
+            f.write(script_text or "（无脚本）")
+            f.write("\n\n### 输入：Asset Library 摘要\n\n")
+            f.write(asset_summary)
+            f.write("\n\n### LLM 原始输出\n\n")
+            f.write(llm_raw)
+            f.write("\n\n### 解析后 task_list\n\n```json\n")
+            f.write(json.dumps(task_list, ensure_ascii=False, indent=2))
+            f.write("\n```\n\n---\n\n")
+            f.write("## 任务执行\n\n")
+
+    @staticmethod
+    def _append_task_log(log_path: Path, result: dict) -> None:
+        """将单个任务的执行结果追加写入日志。"""
+        task_id = result.get("id", "unknown")
+        source = result.get("source", "?")
+        success = result.get("success", False)
+        status = "✅" if success else "❌"
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"### {status} {task_id}  `{source}`\n\n")
+            if result.get("description"):
+                f.write(f"**描述**：{result['description']}\n\n")
+            if result.get("image_prompt"):
+                f.write(f"**Image Prompt**：{result['image_prompt']}\n\n")
+            if success:
+                f.write(f"**最终路径**：`{result.get('final_path')}`\n\n")
+                f.write(f"**Asset ID**：`{result.get('asset_id')}`\n\n")
+            else:
+                f.write(f"**错误**：{result.get('error')}\n\n")
+            f.write("---\n\n")
