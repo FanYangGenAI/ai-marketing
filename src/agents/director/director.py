@@ -10,13 +10,14 @@ Director Agent — 素材编排团队。
      - crop-resize（裁剪至平台规格）
      - text-overlay（叠加文字，可选）
      - privacy-mask（隐私遮挡，可选）
-  4. 将素材路径写入 director_task_result.json
+  4. 将素材路径写入 director/director_task_result.json
 
 模型：Gemini（多模态，理解视觉指令能力强）
 输出：
-  - {daily_folder}/assets/raw/        — 原始素材
-  - {daily_folder}/assets/processed/  — 处理后素材
-  - {daily_folder}/director_task_result.json
+  - {daily_folder}/director/director_raw.md          — LLM 原始规划日志
+  - {daily_folder}/director/director_task_result.json — 任务执行结果
+  - {daily_folder}/assets/raw/                       — 原始素材
+  - {daily_folder}/assets/processed/                 — 处理后素材
 """
 
 from __future__ import annotations
@@ -93,8 +94,9 @@ class DirectorAgent(BaseAgent):
         self.platform = platform
 
     async def run(self, context: AgentContext) -> AgentOutput:
-        result_path = context.daily_folder / "director_task_result.json"
-        log_path = context.daily_folder / "director_raw.md"
+        director_dir = context.subdir("director")
+        result_path = director_dir / "director_task_result.json"
+        log_path = director_dir / "director_raw.md"
         raw_dir = context.subdir("assets", "raw")
         processed_dir = context.subdir("assets", "processed")
 
@@ -143,7 +145,7 @@ class DirectorAgent(BaseAgent):
         response = await self.llm_client.chat(
             messages=messages,
             system=_DIRECTOR_SYSTEM,
-            max_tokens=4096,
+            max_tokens=16000,
             temperature=0.3,
         )
 
@@ -189,7 +191,7 @@ class DirectorAgent(BaseAgent):
             if source == "reuse":
                 raw_path = self._resolve_reuse(task, asset_lib)
             elif source == "screenshot":
-                raw_path = await self._run_screenshot(task, raw_dir, context.campaign_root)
+                raw_path = await self._run_screenshot(task, raw_dir, campaign_root)
             else:  # generate
                 raw_path = await self._run_imagegen(task, raw_dir)
 
@@ -206,8 +208,12 @@ class DirectorAgent(BaseAgent):
             current_path = processed_path
 
             # Step 3：文字叠加（可选）
-            if task.get("text_overlay"):
-                ov = task["text_overlay"]
+            text_overlay = task.get("text_overlay")
+            # LLM 有时返回列表，取第一个元素
+            if isinstance(text_overlay, list):
+                text_overlay = text_overlay[0] if text_overlay else None
+            if text_overlay and isinstance(text_overlay, dict):
+                ov = text_overlay
                 overlay_path = processed_dir / f"{task_id}_overlay.png"
                 self._run_skill(
                     "src/skills/text-overlay/scripts/text_overlay.py",
@@ -247,7 +253,9 @@ class DirectorAgent(BaseAgent):
             result["asset_id"] = record.id
 
         except Exception as e:
+            import traceback
             result["error"] = str(e)
+            logger.error(f"{task_id} 失败: {e}\n{traceback.format_exc()}")
 
         return result
 
@@ -255,21 +263,9 @@ class DirectorAgent(BaseAgent):
 
     async def _run_imagegen(self, task: dict, raw_dir: Path) -> Path:
         output = raw_dir / f"{task['id']}_raw.png"
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "src/skills/gemini-imagegen/scripts/imagegen.py",
-            "--prompt", task.get("image_prompt", task.get("description", "")),
-            "--output", str(output),
-            "--size", self._aspect_to_size(task.get("aspect_ratio", "3:4")),
-            "--level", "auto",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env={**__import__("os").environ, "PYTHONIOENCODING": "utf-8"},
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(f"imagegen 失败: {stderr.decode('utf-8', errors='replace')}")
-        return output
+        prompt = task.get("image_prompt") or task.get("description", "")
+        aspect_ratio = task.get("aspect_ratio", "3:4")
+        return await self.llm_client.generate_image(prompt, output, aspect_ratio)
 
     async def _run_screenshot(self, task: dict, raw_dir: Path, campaign_root: Path) -> Path:
         output = raw_dir / f"{task['id']}_raw.png"

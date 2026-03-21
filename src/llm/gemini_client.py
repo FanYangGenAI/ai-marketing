@@ -8,10 +8,15 @@ SDK 迁移说明：
 """
 
 import os
+from pathlib import Path
 from google import genai
 from google.genai import types
 
 from .base import BaseLLMClient, LLMMessage, LLMResponse
+
+_IMAGE_MODEL = "nano-banana-pro-preview"
+
+_VALID_ASPECT_RATIOS = {"1:1", "3:4", "4:3", "9:16", "16:9"}
 
 
 class GeminiClient(BaseLLMClient):
@@ -60,3 +65,41 @@ class GeminiClient(BaseLLMClient):
             input_tokens=getattr(usage, "prompt_token_count", 0),
             output_tokens=getattr(usage, "candidates_token_count", 0),
         )
+
+    async def generate_image(
+        self,
+        prompt: str,
+        output_path: str | Path,
+        aspect_ratio: str = "3:4",
+    ) -> Path:
+        """
+        使用 nano-banana-pro-preview 生成图片，保存到 output_path。
+
+        Args:
+            prompt:       图片描述（支持中文）
+            output_path:  保存路径（.png）
+            aspect_ratio: 图片比例，支持 1:1 / 3:4 / 4:3 / 9:16 / 16:9
+
+        Returns:
+            保存成功的文件路径
+        """
+        if aspect_ratio not in _VALID_ASPECT_RATIOS:
+            aspect_ratio = "3:4"
+
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+
+        response = await self._client.aio.models.generate_content(
+            model=_IMAGE_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+            ),
+        )
+
+        for part in response.candidates[0].content.parts:
+            if part.inline_data and part.inline_data.mime_type.startswith("image/"):
+                out.write_bytes(part.inline_data.data)
+                return out
+
+        raise ValueError(f"generate_image: API 未返回图像数据（model={_IMAGE_MODEL}）")

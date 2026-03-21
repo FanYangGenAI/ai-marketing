@@ -100,16 +100,17 @@ async def _level1_web(prompt: str, output: str) -> None:
         context = await browser.new_context(storage_state=auth_state)
         page = await context.new_page()
 
-        await page.goto("https://gemini.google.com/app", wait_until="networkidle")
-        await asyncio.sleep(2)
+        await page.goto("https://gemini.google.com/app", wait_until="domcontentloaded")
+        await asyncio.sleep(3)
 
         input_box = page.locator("rich-textarea .ql-editor").first
+        await input_box.wait_for(state="visible", timeout=20000)
         await input_box.click()
         await input_box.fill(f"请生成一张图片：{prompt}")
         await page.keyboard.press("Enter")
 
         img_locator = page.locator("img.generated-image, img[data-imageid]").first
-        await img_locator.wait_for(state="visible", timeout=90000)
+        await img_locator.wait_for(state="visible", timeout=120000)
         await asyncio.sleep(1)
 
         img_url = await img_locator.get_attribute("src")
@@ -154,7 +155,7 @@ async def _level3_gemini(prompt: str, output: str) -> None:
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
     response = await client.aio.models.generate_content(
-        model="gemini-2.5-flash-image",
+        model="nano-banana-pro-preview",
         contents=prompt,
         config=types.GenerateContentConfig(
             response_modalities=["IMAGE"],
