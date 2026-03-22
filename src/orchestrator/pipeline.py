@@ -138,6 +138,9 @@ class Pipeline:
 
         # 加载已有状态
         state = self._load_state(daily_folder)
+        # 手动指定 from_step 时视为全新尝试，重置重试计数
+        if from_step:
+            state.pop("_retry_count", None)
 
         if dry_run:
             context = AgentContext(

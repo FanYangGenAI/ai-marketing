@@ -147,7 +147,7 @@ class AuditAgent(BaseAgent):
                 messages=messages,
                 response_schema=_AUDIT_RESPONSE_SCHEMA,
                 system=_AUDITOR_SYSTEM,
-                max_tokens=2048,
+                max_tokens=8192,
                 temperature=0.1,
             )
             # 确保结果是 list，且每项都有必要字段
