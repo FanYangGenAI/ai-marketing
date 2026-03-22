@@ -66,6 +66,57 @@ class GeminiClient(BaseLLMClient):
             output_tokens=getattr(usage, "candidates_token_count", 0),
         )
 
+    async def chat_structured(
+        self,
+        messages: list[LLMMessage],
+        response_schema: dict,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.1,
+    ) -> list | dict:
+        """
+        调用 Gemini API 的 StructuredOutput 模式。
+
+        使用 response_mime_type="application/json" + response_schema，
+        强制 API 输出符合 schema 的 JSON，彻底消除解析错误。
+
+        Args:
+            messages:        对话历史
+            response_schema: JSON Schema dict，定义输出结构
+            system:          系统提示
+            max_tokens:      最大输出 token 数
+            temperature:     温度（默认 0.1，审核任务要求确定性高）
+
+        Returns:
+            已解析的 Python 对象（list 或 dict）
+        """
+        contents: list[types.Content] = []
+        for m in messages:
+            if m.role == "system":
+                continue
+            role = "user" if m.role == "user" else "model"
+            contents.append(
+                types.Content(role=role, parts=[types.Part(text=m.content)])
+            )
+
+        config = types.GenerateContentConfig(
+            system_instruction=system or "",
+            max_output_tokens=max_tokens,
+            temperature=temperature,
+            response_mime_type="application/json",
+            response_schema=response_schema,
+        )
+
+        response = await self._client.aio.models.generate_content(
+            model=self._model_name,
+            contents=contents,
+            config=config,
+        )
+
+        import json
+        text = response.text or "[]"
+        return json.loads(text)
+
     async def generate_image(
         self,
         prompt: str,

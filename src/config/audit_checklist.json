@@ -1,0 +1,74 @@
+[
+  {
+    "id": "title_length",
+    "category": "platform",
+    "route_on_fail": "creator",
+    "description": "标题字数 ≤ 20 字（含标点）"
+  },
+  {
+    "id": "body_length",
+    "category": "platform",
+    "route_on_fail": "creator",
+    "description": "正文字数 500-1000 字"
+  },
+  {
+    "id": "hashtag_count",
+    "category": "platform",
+    "route_on_fail": "creator",
+    "description": "话题标签数量 3-8 个"
+  },
+  {
+    "id": "no_superlatives",
+    "category": "platform",
+    "route_on_fail": "scriptwriter",
+    "description": "无绝对化用语（最强、第一、无敌、最好、100% 等）"
+  },
+  {
+    "id": "fact_accuracy",
+    "category": "content",
+    "route_on_fail": "scriptwriter",
+    "description": "功能描述与 PRD 一致，无夸大或错误信息"
+  },
+  {
+    "id": "brand_tone",
+    "category": "content",
+    "route_on_fail": "scriptwriter",
+    "description": "品牌调性统一，各段落语气一致"
+  },
+  {
+    "id": "logic_clarity",
+    "category": "content",
+    "route_on_fail": "scriptwriter",
+    "description": "内容逻辑清晰，结构合理（钩子→铺垫→高光→行动引导）"
+  },
+  {
+    "id": "title_match",
+    "category": "content",
+    "route_on_fail": "scriptwriter",
+    "description": "标题与正文内容匹配，无标题党"
+  },
+  {
+    "id": "privacy_safe",
+    "category": "safety",
+    "route_on_fail": "director",
+    "description": "截图中无未遮挡的个人信息（手机号、邮箱、用户 ID 等）"
+  },
+  {
+    "id": "no_false_claims",
+    "category": "safety",
+    "route_on_fail": "planner",
+    "description": "无虚假宣传、无未上线功能声称"
+  },
+  {
+    "id": "copyright_safe",
+    "category": "safety",
+    "route_on_fail": "scriptwriter",
+    "description": "无版权争议素材描述、无真实名人姓名权风险"
+  },
+  {
+    "id": "no_sensitive",
+    "category": "safety",
+    "route_on_fail": "planner",
+    "description": "无政治/宗教/种族/敏感社会话题"
+  }
+]
