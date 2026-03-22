@@ -118,9 +118,22 @@ class AuditAgent(BaseAgent):
 
         # ── 通过则拷贝到 final/ ───────────────────────────────────────────────
         if overall_passed and creator_dir.exists():
+            # 1. 文案文件（post_package.json / post_content.md / creator_raw.md）
             for f in creator_dir.iterdir():
                 if f.is_file():
                     shutil.copy2(f, final_dir / f.name)
+            # 2. post_package.json 中引用的最终图片（按发布顺序编号）
+            package_path = creator_dir / "post_package.json"
+            if package_path.exists():
+                try:
+                    package = json.loads(package_path.read_text(encoding="utf-8"))
+                    for img in package.get("images", []):
+                        src = Path(img["path"])
+                        if src.exists():
+                            dst_name = f"img_{img['order']:02d}_{src.name}"
+                            shutil.copy2(src, final_dir / dst_name)
+                except Exception:
+                    pass  # 图片拷贝失败不影响主流程
 
         failed_count = len(audit_result["summary_failed"])
         status = "✅ 审核通过" if overall_passed else f"❌ 审核未通过（{failed_count} 条不通过）"
