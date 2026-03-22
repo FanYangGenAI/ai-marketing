@@ -2,11 +2,14 @@
 Creator Agent — 物料组装团队。
 
 职责：
-  读取 daily_marketing_script.md + director_task_result.json + 平台规范，
+  读取 daily_marketing_script.md + director/director_task_result.json + 平台规范，
   将文案和素材路径组装为「平台发布包」结构文件。
 
 模型：Claude Opus（指令执行精准，组装逻辑清晰）
-输出：{daily_folder}/output/draft/post_package.json + post_content.md
+输出：
+  - {daily_folder}/creator/creator_raw.md          — LLM 原始响应日志
+  - {daily_folder}/creator/post_package.json        — 发布包结构（JSON）
+  - {daily_folder}/creator/post_content.md          — 可读版发布物料（Markdown）
 """
 
 from __future__ import annotations
@@ -25,14 +28,20 @@ _CREATOR_SYSTEM = """你是一名内容发布打包专员（Creator）。
   2. 素材清单（每张图的实际文件路径）
   3. 平台规范
 
-你的任务是将两者对应整合，输出一份「发布包描述」。
+你的任务是将两者对应整合，输出两个独立的代码块：
 
-输出格式（严格 JSON）：
+【第一块】正文全文，使用 ```body 标记：
+```body
+（正文内容，可自由使用任何标点符号，不受 JSON 转义限制）
+```
+
+【第二块】结构化元数据，使用 ```json 标记（body 字段留空字符串）：
+```json
 {
   "platform": "xiaohongshu",
   "date": "YYYY-MM-DD",
   "title": "最终标题（≤20字）",
-  "body": "正文全文（符合字数要求）",
+  "body": "",
   "hashtags": ["#标签1", "#标签2"],
   "images": [
     {
@@ -43,9 +52,11 @@ _CREATOR_SYSTEM = """你是一名内容发布打包专员（Creator）。
   ],
   "ready_for_audit": true
 }
+```
 
-如果某张图片在素材清单中标记为失败（success=false），
-请在对应 caption 中注明「待补充」，并将 ready_for_audit 设为 false。"""
+注意：
+- 如果某张图片在素材清单中标记为失败（success=false），在 caption 中注明「待补充」，并将 ready_for_audit 设为 false。
+- 必须先输出 ```body 块，再输出 ```json 块，顺序不能颠倒。"""
 
 
 class CreatorAgent(BaseAgent):
@@ -59,16 +70,18 @@ class CreatorAgent(BaseAgent):
 
     async def run(self, context: AgentContext) -> AgentOutput:
         date_str = context.run_date.strftime("%Y-%m-%d")
-        draft_dir = context.subdir("output", "draft")
-        package_path = draft_dir / "post_package.json"
-        content_path = draft_dir / "post_content.md"
+        creator_dir = context.subdir("creator")
+        raw_path = creator_dir / "creator_raw.md"
+        package_path = creator_dir / "post_package.json"
+        content_path = creator_dir / "post_content.md"
 
         # ── 读取上游输出 ──────────────────────────────────────────────────────
         script_text = self._read_optional(
             context.daily_folder / "script" / "daily_marketing_script.md"
         )
-        task_result_path = context.daily_folder / "director_task_result.json"
-        task_result_text = self._read_optional(task_result_path)
+        task_result_text = self._read_optional(
+            context.daily_folder / "director" / "director_task_result.json"
+        )
         platform_spec = self._platform_adapter.build_spec_prompt()
 
         # ── 调用 LLM 组装 ─────────────────────────────────────────────────────
@@ -92,11 +105,15 @@ class CreatorAgent(BaseAgent):
             temperature=0.2,
         )
 
+        # ── 保存原始输出 ──────────────────────────────────────────────────────
+        self._write_raw_log(raw_path, user_msg, response.content, date_str)
+
         # ── 解析并写入输出 ────────────────────────────────────────────────────
+        body_text = self._extract_body_block(response.content)
         package = self._parse_json(response.content)
+        package["body"] = body_text
         self._write_json(package_path, package)
 
-        # 同时输出一份可读的 Markdown
         readable = self._package_to_markdown(package, date_str)
         self._write_output(content_path, readable)
 
@@ -110,15 +127,31 @@ class CreatorAgent(BaseAgent):
         )
 
     @staticmethod
+    def _write_raw_log(raw_path: Path, user_msg: str, llm_response: str, date_str: str) -> None:
+        with open(raw_path, "w", encoding="utf-8") as f:
+            f.write(f"# Creator 原始输出日志 — {date_str}\n\n")
+            f.write("## 输入\n\n")
+            f.write(user_msg)
+            f.write("\n\n---\n\n## LLM 原始响应\n\n")
+            f.write(llm_response)
+            f.write("\n")
+
+    @staticmethod
+    def _extract_body_block(content: str) -> str:
+        """提取 ```body ... ``` 块中的正文内容。"""
+        import re
+        m = re.search(r"```body\s*([\s\S]*?)\s*```", content)
+        return m.group(1).strip() if m else ""
+
+    @staticmethod
     def _parse_json(content: str) -> dict:
         import re
-        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
-        if m:
-            json_str = m.group(1)
-        else:
-            start = content.find("{")
-            end = content.rfind("}")
-            json_str = content[start:end + 1] if start != -1 else "{}"
+        # 提取 ```json ... ``` 块，再找最外层 JSON 对象
+        m = re.search(r"```json\s*([\s\S]*?)\s*```", content)
+        inner = m.group(1) if m else content
+        start = inner.find("{")
+        end = inner.rfind("}")
+        json_str = inner[start:end + 1] if start != -1 else "{}"
         try:
             return json.loads(json_str)
         except json.JSONDecodeError:
