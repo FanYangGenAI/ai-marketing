@@ -2,9 +2,9 @@
 Pipeline — Orchestrator 主流程。
 
 串联顺序：
-  Planner → Scriptwriter → Director → Creator → Audit → (ReviserAgent → 续跑)
+  Strategist → Planner → Scriptwriter → Director → Creator → Audit → (ReviserAgent → 续跑)
 
-Strategist 按需运行（--run-strategist 标志或冷启动时）。
+Strategist 是每次 Pipeline 的强制第一步（冷/热启动自动判断）。
 
 支持断点续跑：每个阶段完成后写入 {daily_folder}/.pipeline_state.json，
 重启时从上次中断的阶段继续。
@@ -27,7 +27,7 @@ from src.orchestrator.lesson_memory import LessonMemory
 log = logging.getLogger(__name__)
 
 # 阶段顺序定义（key 名称用于断点记录）
-STEPS = ["planner", "scriptwriter", "director", "creator", "audit"]
+STEPS = ["strategist", "planner", "scriptwriter", "director", "creator", "audit"]
 
 
 class Pipeline:
@@ -64,6 +64,7 @@ class Pipeline:
         from src.agents.planner.planner import PlannerAgent
         from src.agents.reviser.reviser import ReviserAgent
         from src.agents.scriptwriter.scriptwriter import ScriptwriterAgent
+        from src.agents.strategist.strategist import StrategistAgent
 
         # 从 llm_config.json 读取模型配置
         cfg = self._load_llm_config()
@@ -80,6 +81,7 @@ class Pipeline:
             else GeminiClient(model=auditor_model)
         )
 
+        self._strategist = StrategistAgent(self._gemini, self._openai, self._claude, self.platform)
         self._planner = PlannerAgent(self._gemini, self._claude, self._openai)
         self._scriptwriter = ScriptwriterAgent(self._openai, self._gemini, self._claude, self.platform)
         self._director = DirectorAgent(self._gemini, self.platform)
@@ -94,6 +96,16 @@ class Pipeline:
         config_path = Path(__file__).parent.parent / "config" / "llm_config.json"
         if config_path.exists():
             return json.loads(config_path.read_text(encoding="utf-8"))
+        return {}
+
+    @staticmethod
+    def _load_product_config(campaign_root: Path) -> dict:
+        cfg_path = campaign_root / "config" / "product_config.json"
+        if cfg_path.exists():
+            try:
+                return json.loads(cfg_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
         return {}
 
     async def run(
@@ -120,6 +132,11 @@ class Pipeline:
         campaign_root = self.campaigns_root / self.product_name
         daily_folder = campaign_root / "daily" / run_date.strftime("%Y-%m-%d")
         daily_folder.mkdir(parents=True, exist_ok=True)
+
+        # ── 读取 product_config.json ──────────────────────────────────────────
+        product_cfg = self._load_product_config(campaign_root)
+        user_brief = product_cfg.get("user_brief", "")
+        suppress_version = product_cfg.get("suppress_version_in_copy", True)
 
         # dry_run 不需要真实 SDK，跳过 Agent 初始化
         if not dry_run:
@@ -170,6 +187,8 @@ class Pipeline:
             product_name=self.product_name,
             prd_path=prd_path,
             user_note=effective_user_note,
+            user_brief=user_brief,
+            suppress_version_in_copy=suppress_version,
         )
 
         # ── 主执行循环（支持 Audit 失败回路）────────────────────────────────
@@ -254,6 +273,8 @@ class Pipeline:
                 product_name=self.product_name,
                 prd_path=prd_path,
                 user_note=revised_note,
+                user_brief=user_brief,
+                suppress_version_in_copy=suppress_version,
                 extra={"retry_count": retry_count},
             )
 
@@ -266,6 +287,7 @@ class Pipeline:
 
     async def _run_step(self, step: str, context: AgentContext) -> AgentOutput:
         agent_map = {
+            "strategist": self._strategist,
             "planner": self._planner,
             "scriptwriter": self._scriptwriter,
             "director": self._director,
@@ -323,6 +345,13 @@ class Pipeline:
 
         # ── 阶段详情 ──────────────────────────────────────────────────────────
         _STEP_DETAIL = {
+            "strategist": {
+                "icon": "🎯",
+                "label": "Strategist — 策略反思（第一步，强制）",
+                "agents": ["DataAnalyst/Gemini（经验分析）", "StrategyReviewer/GPT（策略建议）", "StrategyModerator/Claude（综合输出）"],
+                "mechanism": "Debate → Synthesize（2 轮）",
+                "output": "{campaign}/strategy_suggestion.md",
+            },
             "planner": {
                 "icon": "🧠",
                 "label": "Planner — 每日营销策划",

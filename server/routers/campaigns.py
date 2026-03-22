@@ -1,14 +1,43 @@
 import json
+import os
 import re
+import subprocess
+import sys
+from datetime import date as date_cls
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from server.config import CAMPAIGNS_ROOT
 
 router = APIRouter()
+
+# ── Pydantic 请求体模型 ────────────────────────────────────────────────────────
+
+class CreateProductRequest(BaseModel):
+    name: str
+    user_brief: str = ""
+
+class UpdateConfigRequest(BaseModel):
+    user_brief: Optional[str] = None
+    suppress_version_in_copy: Optional[bool] = None
+
+class RunPipelineRequest(BaseModel):
+    today_note: str = ""
+
+class FeedbackRequest(BaseModel):
+    action: str          # "accept" | "reject"
+    reason: str = ""     # 拒绝时填写原因
+
+# ── 运行状态追踪（内存，进程级别）─────────────────────────────────────────────
+_running_processes: Dict[str, subprocess.Popen] = {}
+
+def _get_repo_root() -> Path:
+    """获取项目根目录（server/ 的上级）。"""
+    return Path(__file__).parent.parent.parent
 
 
 def _read_json(path: Path) -> Any:
@@ -67,10 +96,21 @@ async def get_dates(product: str):
             except Exception:
                 pass
 
+        # 读取用户反馈状态
+        feedback = None
+        feedback_path = entry / "feedback.json"
+        if feedback_path.exists():
+            try:
+                fb = _read_json(feedback_path)
+                feedback = fb.get("action")  # "accept" | "reject"
+            except Exception:
+                pass
+
         results.append({
             "date": entry.name,
             "audit_passed": audit_passed,
             "stages_done": stages_done,
+            "feedback": feedback,
         })
 
     return results
@@ -165,3 +205,196 @@ async def get_memory(product: str, platform: str):
     if not memory_file.exists():
         raise HTTPException(status_code=404, detail=f"Memory for platform '{platform}' not found")
     return _read_json(memory_file)
+
+
+# ── 写操作路由 ─────────────────────────────────────────────────────────────────
+
+@router.post("/api/products")
+async def create_product(req: CreateProductRequest):
+    """创建新产品项目，初始化目录结构和 product_config.json。"""
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="产品名称不能为空")
+
+    product_dir = CAMPAIGNS_ROOT / name
+    if product_dir.exists():
+        raise HTTPException(status_code=409, detail=f"产品 '{name}' 已存在")
+
+    # 创建目录结构
+    for subdir in ["config", "docs", "strategy", "memory", "asset_library", "daily"]:
+        (product_dir / subdir).mkdir(parents=True, exist_ok=True)
+
+    # 写入 product_config.json
+    config = {
+        "platform": "xiaohongshu",
+        "suppress_version_in_copy": True,
+        "user_brief": req.user_brief,
+    }
+    config_path = product_dir / "config" / "product_config.json"
+    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {"name": name, "status": "created"}
+
+
+@router.post("/api/products/{product}/config")
+async def update_config(product: str, req: UpdateConfigRequest):
+    """更新产品配置（user_brief、suppress_version_in_copy 等）。"""
+    config_path = CAMPAIGNS_ROOT / product / "config" / "product_config.json"
+    if not config_path.exists():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+
+    config = _read_json(config_path)
+    if req.user_brief is not None:
+        config["user_brief"] = req.user_brief
+    if req.suppress_version_in_copy is not None:
+        config["suppress_version_in_copy"] = req.suppress_version_in_copy
+
+    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"status": "updated", "config": config}
+
+
+@router.get("/api/products/{product}/config")
+async def get_config(product: str):
+    """获取产品配置。"""
+    config_path = CAMPAIGNS_ROOT / product / "config" / "product_config.json"
+    if not config_path.exists():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+    return _read_json(config_path)
+
+
+@router.get("/api/products/{product}/run/status")
+async def get_run_status(product: str):
+    """获取当前或最近一次 Pipeline 运行状态（供前端轮询）。"""
+    proc = _running_processes.get(product)
+    is_running = proc is not None and proc.poll() is None
+
+    # 找最近一次 daily 目录的 pipeline state
+    daily_dir = CAMPAIGNS_ROOT / product / "daily"
+    latest_state = None
+    latest_date = None
+    if daily_dir.exists():
+        date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+        for entry in sorted(daily_dir.iterdir(), reverse=True):
+            if entry.is_dir() and date_pattern.match(entry.name):
+                state_file = entry / ".pipeline_state.json"
+                if state_file.exists():
+                    try:
+                        latest_state = _read_json(state_file)
+                        latest_date = entry.name
+                    except Exception:
+                        pass
+                    break
+
+    # 判断当前运行阶段
+    current_stage = None
+    if is_running and latest_state:
+        for stage in ["strategist", "planner", "scriptwriter", "director", "creator", "audit"]:
+            s = latest_state.get(stage, {})
+            if isinstance(s, dict) and not s.get("done"):
+                current_stage = stage
+                break
+
+    return {
+        "running": is_running,
+        "current_stage": current_stage,
+        "latest_date": latest_date,
+        "stages": latest_state or {},
+    }
+
+
+@router.post("/api/products/{product}/run")
+async def run_pipeline(product: str, req: RunPipelineRequest):
+    """异步触发 Pipeline 运行。"""
+    product_dir = CAMPAIGNS_ROOT / product
+    if not product_dir.exists():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+
+    # 防重入：已在运行中则拒绝
+    existing_proc = _running_processes.get(product)
+    if existing_proc is not None and existing_proc.poll() is None:
+        raise HTTPException(status_code=409, detail="Pipeline 正在运行中，请等待完成后再触发")
+
+    repo_root = _get_repo_root()
+    cmd = [sys.executable, "main.py", "--product", product]
+    if req.today_note:
+        cmd += ["--note", req.today_note]
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(repo_root),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        _running_processes[product] = proc
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"启动 Pipeline 失败：{e}")
+
+    return {"status": "started", "pid": proc.pid}
+
+
+@router.post("/api/products/{product}/{date}/feedback")
+async def submit_feedback(product: str, date: str, req: FeedbackRequest):
+    """
+    提交用户对每日素材包的接受/拒绝反馈。
+    写入 feedback.json，同步更新 LessonMemory。
+    """
+    if req.action not in ("accept", "reject"):
+        raise HTTPException(status_code=400, detail="action 必须为 'accept' 或 'reject'")
+    if req.action == "reject" and not req.reason.strip():
+        raise HTTPException(status_code=400, detail="拒绝时必须填写原因")
+
+    daily_dir = CAMPAIGNS_ROOT / product / "daily" / date
+    if not daily_dir.exists():
+        raise HTTPException(status_code=404, detail=f"日期 '{date}' 数据不存在")
+
+    feedback_path = daily_dir / "feedback.json"
+
+    # 防止重复提交
+    if feedback_path.exists():
+        existing = _read_json(feedback_path)
+        raise HTTPException(
+            status_code=409,
+            detail=f"已提交过反馈（{existing.get('action', '未知')}），不可重复提交"
+        )
+
+    feedback_data = {
+        "action": req.action,
+        "reason": req.reason,
+        "date": date,
+        "submitted_at": date_cls.today().isoformat(),
+    }
+    feedback_path.write_text(json.dumps(feedback_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 同步更新 LessonMemory
+    try:
+        # 动态导入避免循环依赖
+        sys.path.insert(0, str(_get_repo_root()))
+        from src.orchestrator.lesson_memory import LessonMemory
+
+        # 读取产品平台配置
+        cfg_path = CAMPAIGNS_ROOT / product / "config" / "product_config.json"
+        platform = "xiaohongshu"
+        if cfg_path.exists():
+            cfg = _read_json(cfg_path)
+            platform = cfg.get("platform", "xiaohongshu")
+
+        lm = LessonMemory(CAMPAIGNS_ROOT / product, platform)
+
+        if req.action == "accept":
+            # 读取帖子标题作为正向信号
+            pkg_path = daily_dir / "creator" / "post_package.json"
+            title = ""
+            theme = f"{date} 帖子"
+            if pkg_path.exists():
+                pkg = _read_json(pkg_path)
+                title = pkg.get("title", "")
+            lm.write_acceptance(title=title, theme=theme, note=f"用户接受于 {date}")
+        else:
+            lm.write_rejection(reason=req.reason)
+    except Exception as e:
+        # LessonMemory 更新失败不影响 feedback 写入
+        import logging
+        logging.getLogger(__name__).warning(f"LessonMemory 更新失败：{e}")
+
+    return {"status": "submitted", "action": req.action}

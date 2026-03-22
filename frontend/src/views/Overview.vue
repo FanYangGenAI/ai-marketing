@@ -33,6 +33,15 @@
       <div v-else-if="loadError" class="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm">{{ loadError }}</div>
 
       <template v-else>
+        <!-- Run Panel (only when no pipeline has run for today or audit not passed yet) -->
+        <div v-if="!pipelineComplete" class="mb-5">
+          <RunPanel
+            :product="product"
+            :running="pipelineRunning"
+            @started="onPipelineStarted"
+          />
+        </div>
+
         <!-- Pipeline stages card -->
         <div class="bg-white rounded-xl shadow-sm border border-gray-200 mb-5">
           <div class="px-5 py-4 border-b border-gray-100">
@@ -55,7 +64,7 @@
         </div>
 
         <!-- Post summary card -->
-        <div v-if="pkg" class="bg-white rounded-xl shadow-sm border border-gray-200">
+        <div v-if="pkg" class="bg-white rounded-xl shadow-sm border border-gray-200 mb-5">
           <div class="px-5 py-4 border-b border-gray-100">
             <h3 class="font-semibold text-gray-800">帖子摘要</h3>
           </div>
@@ -101,11 +110,28 @@
             </div>
           </div>
         </div>
-        <div v-else class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 text-center text-gray-400 text-sm">
+        <div v-else-if="!pipelineRunning" class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 text-center text-gray-400 text-sm mb-5">
           帖子数据尚未生成
         </div>
+
+        <!-- Feedback Panel (shown only when audit passed and no existing feedback) -->
+        <FeedbackPanel
+          v-if="auditPassed !== null"
+          :product="product"
+          :date="date"
+          :audit-passed="auditPassed"
+          :existing-feedback="existingFeedback"
+          @submitted="onFeedbackSubmitted"
+        />
       </template>
     </div>
+
+    <!-- Floating pipeline status panel -->
+    <PipelineStatusPanel
+      ref="statusPanel"
+      :product="product"
+      @completed="onPipelineCompleted"
+    />
   </div>
 </template>
 
@@ -113,7 +139,10 @@
 import { ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import TabBar from '../components/TabBar.vue'
-import { getState, getPackage, imageUrl } from '../api/index.js'
+import RunPanel from '../components/RunPanel.vue'
+import FeedbackPanel from '../components/FeedbackPanel.vue'
+import PipelineStatusPanel from '../components/PipelineStatusPanel.vue'
+import { getState, getPackage, getDates, imageUrl } from '../api/index.js'
 
 const route = useRoute()
 const product = computed(() => decodeURIComponent(route.params.product || ''))
@@ -123,8 +152,12 @@ const state = ref(null)
 const pkg = ref(null)
 const loading = ref(true)
 const loadError = ref(null)
+const existingFeedback = ref(null)
+const pipelineRunning = ref(false)
+const statusPanel = ref(null)
 
 const STAGE_LABELS = {
+  strategist: '策略 (Strategist)',
   planner: '规划师',
   scriptwriter: '文案创作',
   director: '素材编排',
@@ -134,7 +167,7 @@ const STAGE_LABELS = {
 
 const stages = computed(() => {
   if (!state.value) return []
-  return ['planner', 'scriptwriter', 'director', 'creator', 'audit'].map(key => {
+  return ['strategist', 'planner', 'scriptwriter', 'director', 'creator', 'audit'].map(key => {
     const s = state.value[key] || {}
     let icon = '⏳'
     if (s.done) {
@@ -154,6 +187,8 @@ const auditPassed = computed(() => {
   return state.value.audit.success === true
 })
 
+const pipelineComplete = computed(() => auditPassed.value !== null)
+
 async function load() {
   if (!product.value || !date.value) {
     loading.value = false
@@ -168,12 +203,35 @@ async function load() {
     ])
     state.value = stateData.status === 'fulfilled' ? stateData.value : null
     pkg.value = pkgData.status === 'fulfilled' ? pkgData.value : null
-    // Both null just means no pipeline has run yet for this date — not an error
+
+    // Load existing feedback from dates list
+    try {
+      const dates = await getDates(product.value)
+      const entry = dates.find(d => d.date === date.value)
+      existingFeedback.value = entry?.feedback || null
+    } catch {
+      existingFeedback.value = null
+    }
   } catch (e) {
     loadError.value = e.message
   } finally {
     loading.value = false
   }
+}
+
+function onPipelineStarted() {
+  pipelineRunning.value = true
+  statusPanel.value?.startPolling()
+}
+
+async function onPipelineCompleted() {
+  pipelineRunning.value = false
+  // Reload data to show updated state
+  await load()
+}
+
+function onFeedbackSubmitted(action) {
+  existingFeedback.value = action
 }
 
 watch([product, date], load, { immediate: true })

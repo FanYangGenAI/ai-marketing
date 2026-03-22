@@ -1,10 +1,24 @@
 <template>
   <aside class="w-60 bg-gray-900 text-gray-100 flex flex-col h-screen overflow-hidden">
     <!-- Header -->
-    <div class="px-4 py-4 border-b border-gray-700 flex-shrink-0">
-      <h1 class="text-base font-bold text-white tracking-wide">AI Marketing</h1>
-      <p class="text-xs text-gray-400 mt-0.5">Studio</p>
+    <div class="px-4 py-4 border-b border-gray-700 flex-shrink-0 flex items-center justify-between">
+      <div>
+        <h1 class="text-base font-bold text-white tracking-wide">AI Marketing</h1>
+        <p class="text-xs text-gray-400 mt-0.5">Studio</p>
+      </div>
+      <button
+        @click="showCreateModal = true"
+        class="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-200 transition-colors text-lg leading-none"
+        title="新建产品项目"
+      >+</button>
     </div>
+
+    <!-- Create modal -->
+    <CreateProjectModal
+      v-if="showCreateModal"
+      @close="showCreateModal = false"
+      @created="onProductCreated"
+    />
 
     <!-- Products list -->
     <nav class="flex-1 overflow-y-auto py-2">
@@ -43,9 +57,12 @@
               ? 'bg-blue-600 text-white'
               : 'text-gray-300 hover:bg-gray-700'"
           >
-            <span class="mr-2 text-sm">{{ statusIcon(entry.audit_passed) }}</span>
+            <span class="mr-1.5 text-sm">{{ statusIcon(entry.audit_passed) }}</span>
             <span>{{ entry.date }}</span>
-            <span class="ml-auto text-gray-400 text-xs">{{ entry.stages_done }}/5</span>
+            <span class="ml-auto flex items-center gap-1">
+              <span class="text-gray-400 text-xs">{{ entry.stages_done }}/6</span>
+              <span v-if="entry.feedback" class="text-xs">{{ entry.feedback === 'accept' ? '✅' : '❌' }}</span>
+            </span>
           </router-link>
         </div>
       </div>
@@ -85,6 +102,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getProducts, getDates } from '../api/index.js'
+import CreateProjectModal from './CreateProjectModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -94,6 +112,7 @@ const loading = ref(true)
 const error = ref(null)
 const expandedProducts = reactive(new Set())
 const datesByProduct = reactive({})
+const showCreateModal = ref(false)
 
 const activeProduct = computed(() => {
   const params = route.params
@@ -120,6 +139,18 @@ async function toggleProduct(product) {
     if (!datesByProduct[product]) {
       await loadDates(product)
     }
+  }
+}
+
+async function onProductCreated(name) {
+  // Reload product list and expand the new product
+  try {
+    products.value = await getProducts()
+    await loadDates(name)
+    expandedProducts.add(name)
+    router.push(`/${encodeURIComponent(name)}`)
+  } catch (e) {
+    console.error('Failed to refresh after product creation:', e)
   }
 }
 

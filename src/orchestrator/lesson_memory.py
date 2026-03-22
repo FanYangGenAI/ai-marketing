@@ -61,27 +61,47 @@ class LessonMemory:
     def inject_prompt(self) -> str:
         """
         生成注入到 Agent system prompt 末尾的「历史创作经验」段落。
+        包含负向（需避免）和正向（可参考）两类信号。
         如果没有任何 lessons，返回空字符串。
         """
         lessons = self.load()
         if not lessons:
             return ""
 
-        lines = [
-            "\n\n## 历史创作经验（来自过去审计失败，请严格遵守）",
-            "以下规则是真实发生过的违规案例，本次创作必须避免：\n",
-        ]
-        for lesson in lessons:
-            rule = lesson.get("rule", "")
-            example = lesson.get("offending_example", "")
-            count = lesson.get("fail_count", 1)
-            item_id = lesson.get("checklist_item", "")
-            count_note = f"（已违规 {count} 次）" if count > 1 else ""
-            lines.append(f"- [{item_id}] {rule}{count_note}")
-            if example:
-                lines.append(f"  反例：{example}")
+        negative = [l for l in lessons if l.get("signal") != "positive"]
+        positive = [l for l in lessons if l.get("signal") == "positive"]
 
-        return "\n".join(lines)
+        lines = []
+
+        if negative:
+            lines += [
+                "\n\n## 历史创作经验（请严格遵守）",
+                "### 需要避免的规则（来自审核失败或用户拒绝）\n",
+            ]
+            for lesson in negative:
+                rule = lesson.get("rule", "")
+                example = lesson.get("offending_example", "")
+                count = lesson.get("fail_count", 1)
+                item_id = lesson.get("checklist_item", lesson.get("id", ""))
+                source = lesson.get("source", "audit_failure")
+                source_label = "用户拒绝" if source == "user_rejection" else "审核失败"
+                count_note = f"（已违规 {count} 次）" if count > 1 else ""
+                lines.append(f"- [{source_label}][{item_id}] {rule}{count_note}")
+                if example:
+                    lines.append(f"  反例：{example}")
+
+        if positive:
+            lines += [
+                "\n### 成功经验参考（来自用户已接受的内容）\n",
+            ]
+            for lesson in positive[-3:]:  # 最近 3 条正向经验
+                theme = lesson.get("theme", "")
+                title = lesson.get("title", "")
+                note = lesson.get("note", "")
+                date_val = lesson.get("date", "")
+                lines.append(f"- [{date_val}] {theme or title}: {note}")
+
+        return "\n".join(lines) if lines else ""
 
     # ── 写入 ──────────────────────────────────────────────────────────────────
 
@@ -138,10 +158,76 @@ class LessonMemory:
                 existing_map[item_id] = new_lesson
 
         # 保存
-        data = {
-            "platform": self._platform,
-            "lessons": list(existing_map.values()),
+        self._save(list(existing_map.values()))
+
+    def write_acceptance(self, title: str, theme: str, note: str = "") -> None:
+        """
+        记录用户接受反馈（正向信号）。
+
+        Args:
+            title: 帖子标题
+            theme: 内容主题/方向
+            note: 补充说明（如有）
+        """
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        existing = self.load()
+
+        today_str = date.today().strftime("%Y-%m-%d")
+        lesson_id = f"lesson_{len(existing) + 1:03d}"
+
+        new_lesson = {
+            "id": lesson_id,
+            "signal": "positive",
+            "source": "user_acceptance",
+            "date": today_str,
+            "title": title,
+            "theme": theme,
+            "note": note,
+            "category": "content",
         }
+        existing.append(new_lesson)
+        self._save(existing)
+
+    def write_rejection(self, reason: str) -> None:
+        """
+        记录用户拒绝反馈（负向信号）。
+
+        Args:
+            reason: 用户填写的拒绝原因
+        """
+        if not reason:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        existing = self.load()
+        existing_map = {l.get("checklist_item", l.get("id", "")): l for l in existing}
+
+        today_str = date.today().strftime("%Y-%m-%d")
+        rejection_key = f"user_rejection_{today_str}"
+
+        if rejection_key in existing_map:
+            existing_map[rejection_key]["rule"] = reason
+            existing_map[rejection_key]["date"] = today_str
+            existing_map[rejection_key]["fail_count"] = existing_map[rejection_key].get("fail_count", 1) + 1
+        else:
+            lesson_id = f"lesson_{len(existing_map) + 1:03d}"
+            new_lesson = {
+                "id": lesson_id,
+                "signal": "negative",
+                "source": "user_rejection",
+                "date": today_str,
+                "checklist_item": rejection_key,
+                "category": "content",
+                "rejection_reason": reason,
+                "rule": f"用户拒绝原因：{reason}",
+                "fail_count": 1,
+            }
+            existing_map[rejection_key] = new_lesson
+
+        self._save(list(existing_map.values()))
+
+    def _save(self, lessons: list[dict]) -> None:
+        """保存 lessons 列表到文件。"""
+        data = {"platform": self._platform, "lessons": lessons}
         self._path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2),
             encoding="utf-8",

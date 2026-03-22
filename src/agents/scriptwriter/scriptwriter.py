@@ -131,6 +131,14 @@ class ScriptwriterAgent(BaseAgent):
 
         moderator_system = _MODERATOR_SYSTEM.replace("{date}", date_str)
 
+        # ── 版本号抑制规则注入 ─────────────────────────────────────────────────
+        if context.suppress_version_in_copy:
+            moderator_system += (
+                "\n\n⚠️ 版本号抑制规则（必须严格遵守）：\n"
+                "文案中禁止出现具体版本号（如 v1.2、3.0、Version 2 等），"
+                "除非用户在备注中明确要求。产品能力用功能名称描述，不用版本号。"
+            )
+
         # ── Debate→Synthesize ─────────────────────────────────────────────────
         log_path = context.subdir("script") / "debate_raw.md"
 

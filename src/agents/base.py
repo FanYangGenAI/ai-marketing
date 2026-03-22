@@ -37,8 +37,14 @@ class AgentContext:
     # 产品 PRD 路径（可选，首次运行时提供）
     prd_path: Path | None = None
 
-    # 用户当日额外输入（临时想法、特殊要求等）
+    # 用户当日额外输入（临时想法、特殊要求等 / today_note）
     user_note: str = ""
+
+    # 产品级永久需求描述（创建项目时写，每次 Pipeline 均传入）
+    user_brief: str = ""
+
+    # 文案是否抑制版本号（默认 True）
+    suppress_version_in_copy: bool = True
 
     # 额外的键值对，供特定 Agent 使用
     extra: dict = field(default_factory=dict)
