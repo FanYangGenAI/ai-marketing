@@ -101,7 +101,7 @@ class ReviserAgent(BaseAgent):
                 "status": "requires_human_review",
                 "retry_count": retry_count,
                 "date": date_str,
-                "failed_items": [item["id"] for item in failed_items],
+                "failed_items": [item.get("id") or item.get("check_id", "?") for item in failed_items],
                 "last_audit_result": str(audit_result_path),
                 "note": (
                     f"已自动重试 {retry_count} 次，仍未通过。"
@@ -126,10 +126,10 @@ class ReviserAgent(BaseAgent):
         payload = {
             "route_to": route_to,
             "retry_count": new_retry_count,
-            "failed_items": [item["id"] for item in failed_items],
+            "failed_items": [item.get("id") or item.get("check_id", "?") for item in failed_items],
             "failed_details": [
                 {
-                    "id": item["id"],
+                    "id": item.get("id") or item.get("check_id", "?"),
                     "category": item.get("category", ""),
                     "route_on_fail": item.get("route_on_fail", ""),
                     "reason": item.get("reason", ""),
@@ -161,7 +161,7 @@ class ReviserAgent(BaseAgent):
     ) -> str:
         """使用 LLM 生成针对 route_to 阶段的具体修订指令。"""
         failed_summary = "\n".join(
-            f"- [{item['id']}] {item.get('description', '')}：{item.get('reason', '')}"
+            f"- [{item.get('id') or item.get('check_id', '?')}] {item.get('description', '')}：{item.get('reason', '')}"
             for item in failed_items
         )
         user_msg = f"""以下审核条目未通过，需要在「{route_to}」阶段进行修改：
@@ -183,7 +183,7 @@ class ReviserAgent(BaseAgent):
             # 降级：直接列出失败原因作为指令
             lines = [f"（LLM 生成指令失败，使用原始失败原因）"]
             for item in failed_items:
-                lines.append(f"- [{item['id']}] {item.get('reason', item.get('description', ''))}")
+                lines.append(f"- [{item.get('id') or item.get('check_id', '?')}] {item.get('reason', item.get('description', ''))}")
             return "\n".join(lines)
 
     @staticmethod

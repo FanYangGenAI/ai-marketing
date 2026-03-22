@@ -46,49 +46,82 @@ _AUDIT_RESPONSE_SCHEMA = {
     },
 }
 
-_VISUAL_CHECKLIST = [
+_PER_IMAGE_CHECKS = [
     {
-        "id": "image_complete",
-        "description": "每张图片的核心主体完整可辨：人物头部/面部、产品主体、关键 UI 界面未被切掉一半或大半。注意：主体自然填满画面并接触边缘是正常构图，仅当核心内容明显缺失（如人物只剩半个头、产品只剩一角）才判为不通过。",
+        "check_id": "visual_matches_caption",
+        "description": "图片的底层视觉场景/内容是否合理支撑 caption 所描述的含义（忽略 overlay 文字，只看画面本身）。失败条件：底图是完全无关的场景（如 caption 说展示翻译结果，但底图是海边日落）",
+        "route_on_fail": "scriptwriter",
+    },
+    {
+        "check_id": "no_misleading_overlay",
+        "description": "overlay 文字（如有）是否与底图视觉产生明显矛盾或误导。失败条件：overlay 声称某产品功能，但底图展示的是完全不同的事物，二者放在一起会引起用户误解",
         "route_on_fail": "director",
     },
     {
-        "id": "image_layout",
-        "description": "多对象横向并排构图（如步骤图、对比图、多手机并列）未被竖版裁切，左右内容均完整可见",
+        "check_id": "product_ui_when_claimed",
+        "description": "若 caption 声称此图展示产品界面/截图，底图是否确实包含产品 UI 元素。若 caption 未声称展示产品界面，此项自动通过（passed: true）。失败条件：声称是产品截图，但底图是 AI 生成的插画或无关图片",
+        "route_on_fail": "director",
+    },
+]
+
+_HOLISTIC_CHECKS = [
+    {
+        "check_id": "visual_narrative_coherent",
+        "description": "多图底层视觉放在一起是否讲述有逻辑、有层次的故事或演示。单张图自动视为连贯（passed: true）。失败条件：多图之间视觉风格/主题完全割裂",
         "route_on_fail": "director",
     },
     {
-        "id": "image_readable",
-        "description": "产品实际截图中的 UI 文字和界面元素清晰可读。注意：AI 生成的概念插图中出现模糊的手机屏幕、装饰性文字或艺术化处理属于正常现象，不算不通过；此条仅针对真实产品截图。",
-        "route_on_fail": "director",
-    },
-    {
-        "id": "image_content_match",
-        "description": "图片画面内容与帖子文案所描述的使用场景或功能方向整体一致，无明显偏差。注意：如果下方未提供帖子文案，此条直接判为通过。",
+        "check_id": "product_accurately_represented",
+        "description": "从这组图片的整体视觉印象来看，用户能否正确理解该产品/服务的核心价值。失败条件：整组图片给出了错误的产品印象（如翻译 App 的配图全是旅游风景，完全看不出与语言/翻译相关）",
         "route_on_fail": "scriptwriter",
     },
 ]
 
-_VISUAL_AUDIT_SCHEMA = {
-    "type": "ARRAY",
-    "items": {
-        "type": "OBJECT",
-        "properties": {
-            "id":     {"type": "STRING"},
-            "passed": {"type": "BOOLEAN"},
-            "reason": {"type": "STRING"},
+_SINGLE_VISUAL_AUDIT_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "per_image": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "image_order": {"type": "INTEGER"},
+                    "checks": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "check_id": {"type": "STRING"},
+                                "passed":   {"type": "BOOLEAN"},
+                                "reason":   {"type": "STRING"},
+                            },
+                            "required": ["check_id", "passed", "reason"],
+                        },
+                    },
+                },
+                "required": ["image_order", "checks"],
+            },
         },
-        "required": ["id", "passed", "reason"],
+        "holistic": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "check_id": {"type": "STRING"},
+                    "passed":   {"type": "BOOLEAN"},
+                    "reason":   {"type": "STRING"},
+                },
+                "required": ["check_id", "passed", "reason"],
+            },
+        },
     },
+    "required": ["per_image", "holistic"],
 }
 
-_VISUAL_AUDITOR_SYSTEM = """你是一名严格的视觉素材质量审核员。
-你将收到若干张图片素材（小红书帖子配图）以及一份视觉质量清单。
-请仔细观察每一张图片，然后对清单中的每个条目做出整体判断。
-规则：
-- 只要有任意一张图片明确违反该条目，passed 设为 false
-- 通过时也需提供简短 reason（≤ 50 字）
-- 必须对清单中的每一个条目都给出判断，不可遗漏"""
+_VISUAL_AUDITOR_SYSTEM = """你是一名专业的社交媒体内容审核员，专注于图文一致性审核。
+请【忽略图片上的文字叠加层】，只评估图片的底层视觉内容（场景、人物、物体、氛围）。
+通过时也需提供简短 reason（≤ 50 字）。
+必须对每张图的每个 per-image 条目，以及所有 holistic 条目，逐一给出判断，不可遗漏。"""
 
 _AUDITOR_SYSTEM = """你是一名严格的内容审核员。
 你将收到一份待发布的小红书图文帖子，以及一份审核清单（JSON 数组）。
@@ -143,7 +176,7 @@ class AuditAgent(BaseAgent):
         package = json.loads(package_text) if package_text else {}
         images = package.get("images", [])
 
-        votes_list, visual_raw = await asyncio.gather(
+        votes_list, visual_results = await asyncio.gather(
             asyncio.gather(
                 self._single_audit(audit_input),
                 self._single_audit(audit_input),
@@ -154,7 +187,6 @@ class AuditAgent(BaseAgent):
 
         # ── 按条目汇总投票 ────────────────────────────────────────────────────
         item_results = self._tally_votes(votes_list)
-        visual_results = self._finalize_visual(visual_raw)
 
         overall_passed = (
             all(item["passed"] for item in item_results)
@@ -164,7 +196,7 @@ class AuditAgent(BaseAgent):
         # ── 构建输出 JSON ─────────────────────────────────────────────────────
         all_failed = (
             [item["id"] for item in item_results if not item["passed"]]
-            + [item["id"] for item in visual_results if not item["passed"]]
+            + [item["check_id"] for item in visual_results if not item["passed"]]
         )
         audit_result = {
             "date": date_str,
@@ -237,65 +269,131 @@ class AuditAgent(BaseAgent):
             ]
 
     async def _visual_audit(self, images: list[dict], post_text: str = "") -> list[dict]:
-        """多模态视觉审核：把图片传给 Gemini，对 _VISUAL_CHECKLIST 逐项判断。"""
+        """两层视觉审核：per-image × 3 checks + holistic × 2 checks，均 3-way 投票。"""
         if not images or not hasattr(self.llm_client, "chat_structured_with_images"):
             return []
 
-        image_paths = [Path(img["path"]) for img in images if img.get("path") and Path(img["path"]).exists()]
-        if not image_paths:
+        valid_images = [img for img in images if img.get("path") and Path(img["path"]).exists()]
+        if not valid_images:
             return []
 
-        checklist_text = json.dumps(
-            [{"id": item["id"], "description": item["description"]} for item in _VISUAL_CHECKLIST],
-            ensure_ascii=False, indent=2,
+        image_paths = [Path(img["path"]) for img in valid_images]
+
+        # 构造 prompt：包含每张图的 caption + 帖子正文摘要
+        captions_lines = "\n".join(
+            f"图{img.get('order', i + 1)} caption：{img.get('caption', '（无 caption）')}"
+            for i, img in enumerate(valid_images)
         )
-        post_section = f"\n## 帖子文案（供 image_content_match 判断用）\n{post_text[:1000]}\n" if post_text else ""
+        post_section = f"\n## 帖子正文摘要\n{post_text[:500]}\n" if post_text else ""
+
+        per_checks_desc = "\n".join(
+            f"- {c['check_id']}：{c['description']}" for c in _PER_IMAGE_CHECKS
+        )
+        holistic_checks_desc = "\n".join(
+            f"- {c['check_id']}：{c['description']}" for c in _HOLISTIC_CHECKS
+        )
+
         prompt = (
-            f"以上是本次帖子的 {len(image_paths)} 张配图。"
+            f"以上是本次帖子的 {len(image_paths)} 张配图（按顺序排列）。\n\n"
+            f"## 图片信息\n{captions_lines}\n"
             f"{post_section}\n"
-            f"## 视觉审核清单\n```json\n{checklist_text}\n```\n\n"
-            "请对每个条目做出整体判断（只要有一张图明确违反即为 false）。"
+            f"## Per-image 审核（对每张图独立评估，image_order 从 1 开始）\n{per_checks_desc}\n\n"
+            f"## Holistic 审核（对所有图片整体评估）\n{holistic_checks_desc}\n"
         )
 
         try:
-            result = await self.llm_client.chat_structured_with_images(
-                text=prompt,
-                image_paths=image_paths,
-                response_schema=_VISUAL_AUDIT_SCHEMA,
-                system=_VISUAL_AUDITOR_SYSTEM,
-                max_tokens=4096,
+            raw_results = await asyncio.gather(
+                self._single_visual_audit(image_paths, prompt),
+                self._single_visual_audit(image_paths, prompt),
+                self._single_visual_audit(image_paths, prompt),
             )
-            return result if isinstance(result, list) else []
         except Exception as e:
             logger.warning(f"视觉审核失败（跳过）：{e}")
             return []
 
-    def _finalize_visual(self, raw: list[dict]) -> list[dict]:
-        """将视觉审核原始结果补充 checklist 元数据，缺失条目标记为跳过。"""
-        raw_map = {item.get("id"): item for item in raw}
-        results = []
-        for checklist_item in _VISUAL_CHECKLIST:
-            cid = checklist_item["id"]
-            if cid in raw_map:
-                results.append({
-                    "id": cid,
-                    "category": "visual",
-                    "description": checklist_item["description"],
-                    "route_on_fail": checklist_item["route_on_fail"],
-                    "passed": raw_map[cid].get("passed", True),
-                    "reason": raw_map[cid].get("reason", ""),
+        return self._tally_visual_votes(list(raw_results), valid_images)
+
+    async def _single_visual_audit(self, image_paths: list[Path], prompt: str) -> dict:
+        """单次多模态调用，返回 {per_image: [...], holistic: [...]} 原始结果。"""
+        try:
+            result = await self.llm_client.chat_structured_with_images(
+                text=prompt,
+                image_paths=image_paths,
+                response_schema=_SINGLE_VISUAL_AUDIT_SCHEMA,
+                system=_VISUAL_AUDITOR_SYSTEM,
+                max_tokens=8192,
+            )
+            if isinstance(result, dict) and "per_image" in result and "holistic" in result:
+                return result
+            return {"per_image": [], "holistic": []}
+        except Exception as e:
+            logger.warning(f"单次视觉审核异常：{e}")
+            return {"per_image": [], "holistic": []}
+
+    def _tally_visual_votes(self, raw_results: list[dict], valid_images: list[dict]) -> list[dict]:
+        """汇总 3 轮视觉审核投票，生成最终 visual_items 列表。"""
+        visual_items = []
+
+        # Per-image 投票
+        for img in valid_images:
+            order = img.get("order", 1)
+            for check in _PER_IMAGE_CHECKS:
+                cid = check["check_id"]
+                full_id = f"img_{order}_{cid}"
+                votes, reasons = [], []
+                for result in raw_results:
+                    img_entry = next(
+                        (x for x in result.get("per_image", []) if x.get("image_order") == order),
+                        None,
+                    )
+                    if img_entry:
+                        vote_item = next(
+                            (c for c in img_entry.get("checks", []) if c.get("check_id") == cid),
+                            None,
+                        )
+                        if vote_item:
+                            votes.append(bool(vote_item.get("passed", True)))
+                            reasons.append(vote_item.get("reason", ""))
+
+                passed = sum(votes) >= 2 if votes else True
+                fail_reasons = [r for v, r in zip(votes, reasons) if not v and r]
+                pass_reasons = [r for v, r in zip(votes, reasons) if v and r]
+                visual_items.append({
+                    "check_id": full_id,
+                    "category": "visual_per_image",
+                    "route_on_fail": check["route_on_fail"],
+                    "passed": passed,
+                    "votes": votes,
+                    "reason": (fail_reasons or pass_reasons or ["（无说明）"])[0],
                 })
-            else:
-                # 模型未返回该条目，视为跳过（不计入失败）
-                results.append({
-                    "id": cid,
-                    "category": "visual",
-                    "description": checklist_item["description"],
-                    "route_on_fail": checklist_item["route_on_fail"],
-                    "passed": True,
-                    "reason": "（视觉审核未覆盖此条目）",
-                })
-        return results
+
+        # Holistic 投票
+        for check in _HOLISTIC_CHECKS:
+            cid = check["check_id"]
+            full_id = f"holistic_{cid}"
+            votes, reasons = [], []
+            for result in raw_results:
+                vote_item = next(
+                    (c for c in result.get("holistic", []) if c.get("check_id") == cid),
+                    None,
+                )
+                if vote_item:
+                    votes.append(bool(vote_item.get("passed", True)))
+                    reasons.append(vote_item.get("reason", ""))
+
+            passed = sum(votes) >= 2 if votes else True
+            fail_reasons = [r for v, r in zip(votes, reasons) if not v and r]
+            pass_reasons = [r for v, r in zip(votes, reasons) if v and r]
+            visual_items.append({
+                "check_id": full_id,
+                "category": "visual_holistic",
+                "route_on_fail": check["route_on_fail"],
+                "passed": passed,
+                "votes": votes,
+                "reason": (fail_reasons or pass_reasons or ["（无说明）"])[0],
+            })
+
+        return visual_items
 
     def _tally_votes(self, votes_list: list[list[dict]]) -> list[dict]:
         """

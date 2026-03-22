@@ -16,12 +16,15 @@
 
 ---
 
-## 阶段二：Strategist（策略反思，冷/热启动）
+## 阶段二：Strategist（每次 Pipeline 的强制第一步）
 
 - [ ] **#2** `src/agents/strategist/strategist.py`
-  - 读取：历史投放数据摘要 + 用户反馈
+  - **触发时机**：每次 Pipeline 运行的第一步（无论冷/热启动，强制执行）
+  - 读取：`user_brief`（产品级永久需求）+ `today_note`（本次运行特殊要求，可选）+ 历史投放数据（有则热启动，无则冷启动）
   - 调用 Debate→Synthesize（StrategyDataAnalyst/Gemini, StrategyReviewer/GPT-4o, StrategyModerator/Claude）
-  - 输出：`campaigns/{product}/strategy_suggestion.md`
+  - 冷启动：搜索行业规律，输出起步策略建议
+  - 热启动：分析历史投放数据，输出优化策略建议
+  - 输出：`campaigns/{product}/strategy/strategy_suggestion_{date}.md`
 
 ---
 
@@ -110,6 +113,10 @@
 - [x] **#9e** `src/orchestrator/lesson_memory.py`
   - `load()` / `inject_prompt()` / `write_lessons()`
   - 按 platform 隔离，失败条目去重累计
+  - [ ] **#9e-ext** 扩展为双向学习信号：
+    - `write_rejection(reason, date)` — 用户拒绝反馈写入负向经验
+    - `write_acceptance(theme, title, date)` — 用户接受反馈写入正向经验
+    - 数据结构中新增 `signal`（positive/negative）和 `source`（audit_failure/user_rejection/user_acceptance）字段
 
 - [x] **#10a** `src/orchestrator/pipeline.py` — Audit 失败回路
   - Audit 失败 → ReviserAgent → 从 route_to 续跑
@@ -130,6 +137,18 @@
 
 ---
 
+## 阶段八·五：版本号抑制 + user_brief 注入
+
+- [ ] **#11a** `campaigns/{product}/config/product_config.json` 新增字段
+  - `suppress_version_in_copy: true`（默认 true，可在 product_config 中关闭）
+  - `user_brief`：产品级永久需求描述（创建项目时写，后续 Strategist 读取）
+
+- [ ] **#11b** Scriptwriter system prompt 注入版本号抑制规则
+  - 读取 product_config.json 中的 `suppress_version_in_copy`
+  - 若为 true，在 system prompt 中注入：「文案中不出现具体版本号（如 v1.2、3.0），除非 today_note 中明确要求」
+
+---
+
 ## 阶段九：测试（待启动）
 
 - [ ] **#12** `tests/agents/` — 各 Agent 单元测试（mock LLM 调用，验证文件输出）
@@ -144,7 +163,10 @@
 （已完成）
 #8a → #9a → #9b → #9c → #9e → #9d → #10a → #10 → #11
 
-（待启动）
+（待启动，按优先级）
+#2   （Strategist，每次 Pipeline 强制第一步）
+#11a → #11b  （版本号抑制 + user_brief 注入）
+#9e-ext  （LessonMemory 双向学习信号扩展）
 #12 → #13 → #14 （单元测试 + 集成测试）
 ```
 
@@ -155,7 +177,7 @@
 | # | 任务 | 状态 |
 |---|------|------|
 | 1 | BaseAgent 基类 | ✅ 完成 |
-| 2 | Strategist | ⬜ 待开始 |
+| 2 | Strategist（每次 Pipeline 强制第一步） | ⬜ 待开始 |
 | 3 | Planner | ✅ 完成并验收 |
 | 4 | CampaignMemory | ✅ 完成 |
 | 5 | PlatformAdapter | ✅ 完成 |
@@ -174,4 +196,7 @@
 | 11 | main.py CLI 入口 | ✅ 完成 |
 | 12 | Agent 单元测试 | ⬜ 待开始 |
 | 13 | Pipeline 集成测试 | ⬜ 待开始 |
+| 11a | product_config.json 扩展（user_brief + suppress_version） | ⬜ 待开始 |
+| 11b | Scriptwriter 版本号抑制规则注入 | ⬜ 待开始 |
+| 9e-ext | LessonMemory 双向学习信号（接受/拒绝） | ⬜ 待开始 |
 | 14 | 完整链路手动验证 | ✅ 已完成（2026-03-22 原语首跑验收） |

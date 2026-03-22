@@ -229,7 +229,7 @@ async def _moderator_synthesize(
     response = await client.chat(
         messages=[LLMMessage(role="user", content=user_msg)],
         system=system or default_system,
-        max_tokens=4096,
+        max_tokens=8192,
     )
     logger.debug(
         "\n%s\n[Moderator 输出]\n%s\n%s",

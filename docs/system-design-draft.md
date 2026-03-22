@@ -1,4 +1,4 @@
-# AI Marketing Multi-Agent System — Design Draft v1.2
+# AI Marketing Multi-Agent System — Design Draft v1.3
 
 > 状态：进行中
 > 更新日期：2026-03-22
@@ -18,6 +18,13 @@
 >   - 技术选型：Vite + Vue 3 + Tailwind（前端）/ FastAPI（后端）
 >   - 设计六个核心视图：Overview、PostDetail、AuditReport、PipelineLog、AssetLibrary、LessonMemory
 >   - FastAPI 只读 REST API，自动生成 OpenAPI 文档
+> - v1.2 → v1.3：
+>   - **Strategist 成为每次 Pipeline 必跑的第一步**（不再是冷启动专属）
+>   - **新增用户交互完整闭环**：项目创建 → 运行触发 → 接受/拒绝反馈 → LessonMemory 更新
+>   - **前端从只读升级为可操作**：创建项目、触发流水线（异步）、接受/拒绝每日素材包
+>   - **新增右下角实时状态面板**：流水线各阶段实时进度，可折叠
+>   - **版本号抑制策略**：文案默认不携带产品版本号，可通过 product_config.json 控制
+>   - **LessonMemory 扩展为双向**：接受（正向强化）+ 拒绝原因（负向强化）
 
 ---
 
@@ -36,17 +43,20 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                              USER                                     │
-│  输入：PRD / 产品 / 个人想法建议 / 手动上传平台反馈数据                  │
-│  输出：确认 Audit 通过的物料清单 → 手动投放各平台                        │
+│                        USER（前端可操作）                              │
+│  创建项目：产品命名 + 上传 PRD + 填写产品需求描述（user_brief）          │
+│  运行前可选：填写 today_note（本次特殊要求）                             │
+│  触发流水线（异步）→ 右下角实时状态面板查看进度                           │
+│  接受 ✅ / 拒绝 ❌+原因 每日素材包 → 反馈写入 LessonMemory               │
 └───────────┬──────────────────────────────────────┬────────────────────┘
-            │ 产品资料 + 用户建议                    │ 平台反馈数据（手动）
-            │                                      ▼
-            │                           ┌─────────────────────┐
-            │                           │     Strategist      │
-            │            ┌──────────────│  反思 & 策略 (冷/热)  │
-            │            │ 策略建议文档  └─────────────────────┘
-            ▼            ▼
+            │ 产品资料 + 用户建议                    │ 平台反馈数据（手动上传）
+            ▼
+  ┌─────────────────────────────────────────────────┐
+  │                  Strategist                     │  ← 每次 Pipeline 的强制第一步
+  │          策略反思 & 建议（冷/热启动）              │    冷启动：分析行业规律，给出起步策略
+  └──────────────────────┬──────────────────────────┘    热启动：解读历史投放数据，给出优化策略
+                         │ strategy_suggestion.md
+                         ▼
   ┌──────────────────────────┐     ┌─────────────────────────┐
   │         Planner          │◄────│    Campaign Memory      │
   │      每日营销策划团队      │     │  历史投放记录 / 日志      │
@@ -61,7 +71,7 @@
                ▼
   ┌──────────────────────────┐
   │       Scriptwriter       │
-  │      操作脚本创作团队      │
+  │      操作脚本创作团队      │  （文案默认不携带版本号，suppress_version_in_copy）
   └────────────┬─────────────┘
                │ daily_marketing_script.md
                ▼
@@ -81,7 +91,8 @@
                                ▼
   ┌──────────────────────────────────────────────────────────┐
   │                         Audit                            │
-  │         共享清单 × 3 Gemini 并行投票（per-item 2/3）        │
+  │  文本：共享清单 × 3 Gemini 并行投票（per-item 2/3）         │
+  │  视觉：per-image + holistic，3-way voting                 │
   └────────────────────────────┬─────────────────────────────┘
                                │
                     ┌──────────┴──────────┐
@@ -91,28 +102,26 @@
        │   每日投放物料清单     │  │        ReviserAgent         │
        │  output/final/ 文件夹 │  │  分类问题 → 决定路由阶段      │
        └──────────┬───────────┘  └──────────┬──────────────────┘
-                  │
-                  ▼
-       ┌──────────────────────┐
-       │   展示层（只读）       │
-       │  FastAPI + Vue 前端   │
-       │  浏览/审阅/下载物料    │
-       └──────────────────────┘
-                                            │ route_to + revision_instructions
-                                            │ (RetryGuard: 超限 → human_review_required.json)
+                  │                         │ route_to + revision_instructions
+                  ▼                         │ (RetryGuard: 超限 → human_review_required.json)
+       ┌──────────────────────┐             │
+       │   前端展示层（可操作）  │             ▼
+       │  FastAPI + Vue 前端   │  ┌──────────────────────────────────┐
+       │  浏览 / 审阅 / 下载    │  │          LessonMemory            │
+       │  [✅接受] / [❌拒绝]   │  │   campaigns/{p}/memory/          │
+       └──────────┬───────────┘  │   lessons_{platform}.json        │
+                  │              │                                  │
+                  │ 接受/拒绝+原因│  写入信号（双向）：                │
+                  └─────────────►│  ① Audit 失败    → 负向经验       │
+                                 │  ② 用户拒绝+原因 → 负向经验       │
+                                 │  ③ 用户接受      → 正向经验       │
+                                 └──────────┬───────────────────────┘
+                                            │ 读取历史规则经验（注入到 prompt）
+                                            ▼
+                                 Planner / Scriptwriter / Creator
                                             │
                                             ▼
-                              ┌─────────────────────────────┐
-                              │       LessonMemory          │◄─ 写入失败经验
-                              │  campaigns/{p}/memory/      │   （每次 Audit 失败时）
-                              │  lessons_{platform}.json    │
-                              └──────────┬──────────────────┘
-                                         │ 读取历史规则经验（注入到 prompt）
-                                         ▼
-                              Planner / Scriptwriter / Creator
-                                         │
-                                         ▼
-                                 从指定阶段重新执行 Pipeline
+                                    从指定阶段重新执行 Pipeline
 ```
 
 ---
@@ -190,11 +199,15 @@ class LLMClient:
 
 Planner 在每次启动时，自动扫描最近 N 天（默认 30 天）的 `plan/` 目录，生成「已覆盖话题摘要」作为上下文输入，避免内容重复。
 
-#### 长期记忆：Lesson Memory（审计失败经验积累）
+#### 长期记忆：Lesson Memory（双向学习信号）
 
-**关键决策：每次 Audit 失败时，将具体失败案例写入长期记忆文件，后续创作阶段自动读取并注入 prompt，避免重复犯同类错误。**
+**关键决策：LessonMemory 同时接受正向（用户接受）和负向（Audit 失败 / 用户拒绝）信号，形成双向学习闭环。**
 
-- **写入时机**：ReviserAgent 触发时，将每个失败条目（含具体内容片段）写入 `campaigns/{product}/memory/lessons_{platform}.json`
+- **负向写入时机（避免犯错）**：
+  - ① ReviserAgent 触发时（Audit 失败条目写入，含违规内容片段）
+  - ② 用户在前端点击「❌ 拒绝」并填写原因时（写入拒绝理由）
+- **正向写入时机（强化成功）**：
+  - ③ 用户在前端点击「✅ 接受」时（记录当日成功物料特征，供后续创作参考）
 - **读取时机**：Planner / Scriptwriter / Creator 启动时读取当前平台的 lesson 列表，注入到各自的 system prompt 末尾（"历史经验提示"段落）
 - **作用范围**：按 `platform` 隔离（小红书经验不污染抖音创作）；按 `category` 筛选相关经验（Scriptwriter 主要读 `content` + `platform` 类经验，Director 主要读 `safety` 类经验）
 - **持久化**：不限时间，不删除，只追加（可手动清理）
@@ -353,10 +366,12 @@ campaigns/{product}/asset_library/
 ```json
 {
   "platform": "xiaohongshu",
-  "version": "1.0",
+  "version": "1.1",
   "lessons": [
     {
       "id": "lesson_001",
+      "signal": "negative",
+      "source": "audit_failure",
       "date": "2026-03-22",
       "checklist_item": "title_length",
       "category": "platform",
@@ -366,27 +381,51 @@ campaigns/{product}/asset_library/
     },
     {
       "id": "lesson_002",
+      "signal": "negative",
+      "source": "user_rejection",
+      "date": "2026-03-23",
+      "rejection_reason": "整体风格过于硬广，缺少真实生活感，不符合小红书社区调性",
+      "category": "content",
+      "rule": "避免硬广叙事，多用第一人称真实体验分享角度",
+      "injected_to": ["planner", "scriptwriter"]
+    },
+    {
+      "id": "lesson_003",
+      "signal": "positive",
+      "source": "user_acceptance",
       "date": "2026-03-22",
-      "checklist_item": "no_superlatives",
-      "category": "platform",
-      "offending_content": "「全网最快的待办工具」",
-      "rule": "禁止使用绝对化用语：最快、最强、第一、无敌、100%等，改用「超快」「高效」等相对表达",
-      "injected_to": ["scriptwriter"]
+      "title": "AI把梅老板翻成煤老板，我3秒救回",
+      "theme": "翻译翻车反差叙事",
+      "note": "用户接受，发布效果良好。幽默反差型内容与产品功能结合效果佳",
+      "category": "content",
+      "injected_to": ["planner", "scriptwriter"]
     }
   ]
 }
 ```
 
-#### 写入逻辑（ReviserAgent 负责）
+#### 写入逻辑
 
 ```
-Audit 失败 → ReviserAgent 触发
+【负向信号 ①】Audit 失败 → ReviserAgent 触发
       ↓
 for 每个 failed checklist item:
-    构建 lesson 条目（含 offending_content 从 audit_result 中提取、rule 生成）
+    构建 lesson 条目（signal=negative, source=audit_failure）
     检查是否已有相同 checklist_item 的 lesson（去重：同一条规则不重复记录）
         ├── 已有 → 更新 date（证明规则仍在违反，可累计触发次数）
         └── 无 → 追加新 lesson
+    写入 lessons_{platform}.json
+
+【负向信号 ②】用户在前端点击「❌ 拒绝」+ 填写拒绝原因
+      ↓
+    写入 lesson 条目（signal=negative, source=user_rejection）
+    记录 rejection_reason、日期
+    写入 lessons_{platform}.json
+
+【正向信号 ③】用户在前端点击「✅ 接受」
+      ↓
+    写入 lesson 条目（signal=positive, source=user_acceptance）
+    记录当日素材的 theme、title 等成功特征
     写入 lessons_{platform}.json
 ```
 
@@ -419,6 +458,22 @@ class LessonMemory:
     def inject_prompt(agent: str, platform: str) -> str  # 生成注入段落
     def write_lesson(platform: str, lesson: dict)  # 追加/更新单条 lesson
 ```
+
+---
+
+### 3.6 版本号抑制策略
+
+**关键决策：营销文案默认不携带产品版本号（如 v1.2、2.0 等），除非用户明确要求。**
+
+**原因：**
+- 版本号属于开发视角，用户（消费者）对版本号无感知，不增加宣传效果
+- 版本号频繁更新会导致历史物料过期，增加维护成本
+- 例外：用户在 today_note 中明确提及「本次发布是大版本更新，请强调 X.0」
+
+**实现方式：**
+- `campaigns/{product}/config/product_config.json` 新增字段：`"suppress_version_in_copy": true`（默认 `true`）
+- Scriptwriter system prompt 中注入规则：「文案中不出现具体版本号（如 v1.2、3.0），除非用户在 today_note 中明确要求」
+- 用户可在 today_note 中写「本次是 2.0 正式版大更新，请在文案中体现」，Scriptwriter 优先响应
 
 ---
 
@@ -830,7 +885,7 @@ overall_passed = all(item.passed for item in checklist)
 
 **角色定位：** 基于真实投放数据反思，输出策略建议文档供 Planner 参考。
 
-**触发时机：** 每次 Planner 启动前运行（系统第一步）。
+**触发时机：** 每次 Pipeline 运行的强制第一步（无论冷启动还是热启动）。Strategist 输出的 `strategy_suggestion.md` 作为 Planner 的必需输入。
 
 **冷启动处理（无历史数据时）：**
 
@@ -968,10 +1023,12 @@ async def run_daily_pipeline(product: str, user_input: str = ""):
 
     daily_folder = f"campaigns/{product}/daily/{today}"
 
-    # Step 1: Strategist（冷/热启动）
+    # Step 1: Strategist（强制第一步，冷启动/热启动自动判断）
     strategy = await strategist.run(
         product=product,
-        feedback_data=load_latest_feedback(product)  # None → 冷启动
+        user_brief=load_user_brief(product),        # 产品级需求描述（创建项目时写）
+        today_note=context.extra.get("today_note"), # 本次运行特殊要求（可选）
+        feedback_data=load_latest_feedback(product) # None → 冷启动，有数据 → 热启动
     )
 
     # Step 2: Planner（多 LLM 讨论）
@@ -1117,7 +1174,13 @@ async def debate_and_synthesize(agents: list, moderator, context: dict) -> str:
 
 ### 11.1 设计目标
 
-提供一个本地 Web 界面，让用户可以浏览、审阅所有 Pipeline 输出数据，以及下载最终投放物料。**当前阶段只读**，不触发任何 Pipeline 操作。
+提供一个本地 Web 界面，支持完整的用户交互闭环：创建产品项目 → 触发流水线 → 浏览/审阅物料 → 接受/拒绝反馈 → 自动更新 LessonMemory。
+
+**交互阶段：**
+- **创建项目**：输入产品命名、上传 PRD、填写产品需求描述（user_brief，永久有效）
+- **触发流水线**：每日运行前可填写 today_note（本次特殊要求，如「今天是情人节，写一篇相关的帖子」）；点击「开始运行」异步触发 Pipeline；右下角状态面板实时显示各阶段进度
+- **审阅物料**：浏览帖子、下载图片、复制文案
+- **接受/拒绝**：每个日期的素材包可点击「✅ 接受」或「❌ 拒绝 + 填写原因」；反馈自动写入 LessonMemory，供下次创作参考
 
 ### 11.2 技术选型
 
@@ -1162,16 +1225,18 @@ ai-marketing/
 
 ### 11.4 FastAPI 接口设计
 
-所有接口只读，无写操作。基准路径 `/api`。
+基准路径 `/api`。只读接口（GET）+ 写操作接口（POST）。
 
 ```
+=== 只读接口 ===
+
 GET  /api/products
      → 扫描 campaigns/ 目录，返回所有产品名（按字母排序）
      → ["原语", "Yuanyu", ...]
 
 GET  /api/products/{product}/dates
      → 返回该产品所有已运行日期（降序），含每日 pipeline 状态摘要
-     → [{"date": "2026-03-22", "passed": true, "stages_done": 5}, ...]
+     → [{"date": "2026-03-22", "passed": true, "stages_done": 5, "feedback": "accepted"}, ...]
 
 GET  /api/products/{product}/{date}/state
      → 读取 .pipeline_state.json
@@ -1199,6 +1264,35 @@ GET  /api/products/{product}/memory/{platform}
 GET  /api/images?path=campaigns/原语/daily/.../img_01.png
      → 读取图片文件，返回二进制（Content-Type: image/png）
      → 前端直接用作 <img src="/api/images?path=...">
+
+GET  /api/products/{product}/run/status
+     → 返回当前或最近一次 Pipeline 运行状态
+     → {"running": true, "stage": "scriptwriter", "stages": {...}}
+
+=== 写操作接口 ===
+
+POST /api/products
+     → 创建新产品项目
+     → body: {"name": "原语", "user_brief": "这是一款..."}
+     → 创建 campaigns/{name}/config/product_config.json
+
+POST /api/products/{product}/config
+     → 更新产品配置（user_brief 等）
+
+POST /api/products/{product}/prd
+     → 上传 PRD 文件（multipart/form-data）
+     → 写入 campaigns/{product}/docs/
+
+POST /api/products/{product}/run
+     → 异步触发 Pipeline
+     → body: {"today_note": "今天是情人节，写一篇相关的帖子"}（可选）
+     → 在后台启动 main.py，立即返回 {"status": "started"}
+
+POST /api/products/{product}/{date}/feedback
+     → 提交用户接受/拒绝反馈
+     → body: {"action": "accept"} 或 {"action": "reject", "reason": "..."}
+     → 写入 daily_folder/feedback.json
+     → 同步更新 memory/lessons_{platform}.json
 ```
 
 **安全限制：** `file` 接口和 `images` 接口限制路径只能在 `campaigns/` 目录内，防止目录遍历。
@@ -1323,27 +1417,104 @@ Pipeline 状态
 展开每条 → 显示完整规则 + 反例内容
 ```
 
-### 11.6 布局结构
+### 11.6 新增交互组件
+
+#### 创建项目 Modal（`components/CreateProjectModal.vue`）
+
+```
+┌─────────────────────────────────────────┐
+│           新建产品项目                   │
+├─────────────────────────────────────────┤
+│  产品名称   [ 原语                    ]  │
+│                                         │
+│  产品需求描述（user_brief）：             │
+│  ┌─────────────────────────────────┐    │
+│  │ 原语是一款AI辅助翻译工具，       │    │
+│  │ 主要面向职场人群和学生...        │    │
+│  └─────────────────────────────────┘    │
+│                                         │
+│  上传 PRD（可选）  [ 选择文件 ]           │
+│                                         │
+│  [ 取消 ]              [ 创建项目 ]      │
+└─────────────────────────────────────────┘
+```
+
+#### 运行触发 Panel（`components/RunPanel.vue`）
+
+```
+┌─────────────────────────────────────────┐
+│  今日运行备注（today_note，可选）          │
+│  ┌─────────────────────────────────┐    │
+│  │ 今天是情人节，希望写一篇与...    │    │
+│  └─────────────────────────────────┘    │
+│                                         │
+│  [ 🚀 开始运行流水线 ]                   │
+└─────────────────────────────────────────┘
+```
+
+#### 右下角实时状态面板（`components/PipelineStatusPanel.vue`）
+
+```
+┌──────────────────────────────┐  ← 可折叠，默认展开（运行时）
+│  流水线进行中...  [─]         │
+├──────────────────────────────┤
+│  ✅ Strategist    13:30:12   │
+│  ✅ Planner       13:35:48   │
+│  🔄 Scriptwriter  进行中...  │
+│  ⏳ Director                 │
+│  ⏳ Creator                  │
+│  ⏳ Audit                    │
+└──────────────────────────────┘
+```
+
+轮询 `/api/products/{product}/run/status`（每 3 秒），更新各阶段状态图标。
+
+#### 接受/拒绝 操作区（集成到 Overview 或 PostDetail）
+
+```
+┌─────────────────────────────────────────┐
+│  用户操作                                │
+│                                         │
+│  [ ✅ 接受并准备发布 ]                   │
+│                                         │
+│  [ ❌ 拒绝 ]  拒绝原因：                 │
+│  ┌─────────────────────────────────┐    │
+│  │ 整体风格过于硬广，不符合小红书   │    │
+│  │ 社区调性...                      │    │
+│  └─────────────────────────────────┘    │
+│  [ 提交拒绝 ]                           │
+└─────────────────────────────────────────┘
+```
+
+接受/拒绝后状态固化，不可撤销（防止重复提交）。反馈即时写入 LessonMemory。
+
+### 11.7 布局结构（更新版）
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  AI Marketing Studio                              [今日 03-22]  │
+│  AI Marketing Studio            [+ 新建项目]    [今日 03-22]    │
 ├──────────────┬──────────────────────────────────────────────────┤
 │  CAMPAIGNS   │                                                   │
 │              │          主内容区（视图切换）                     │
-│  原语        │                                                   │
-│  ├ 2026-03-22│  [Overview] [帖子预览] [审核报告] [日志] 标签栏   │
-│  └ 2026-03-21│                                                   │
+│  原语  [▶运行]│                                                   │
+│  ├ 03-22 ✅接│  [Overview] [帖子预览] [审核报告] [日志] 标签栏   │
+│  └ 03-21 ❌拒│                                                   │
 │              │                                                   │
 │  ──────────  │                                                   │
 │  素材库      │                                                   │
-│  经验记忆    │                                                   │
-└──────────────┴──────────────────────────────────────────────────┘
+│  经验记忆    │                                        ┌────────┐ │
+│              │                           右下角状态面板 │流水线  │ │
+│              │                           （可折叠）    │进行中  │ │
+└──────────────┴────────────────────────────────────────┴────────┘
 ```
 
-左侧固定宽度导航树 + 右侧主内容区。每个日期下有 4 个标签（Overview / 帖子预览 / 审核报告 / 日志）。素材库和经验记忆为产品级全局视图（不区分日期）。
+- 左侧：导航树，每个日期显示反馈状态（✅接受 / ❌拒绝 / ⬜未处理）
+- 产品级「▶运行」按钮触发当日 Pipeline
+- 右下角悬浮状态面板（运行时展开，完成后自动折叠）
+- 每个日期下有 4 个标签（Overview / 帖子预览 / 审核报告 / 日志）
+- 素材库和经验记忆为产品级全局视图（不区分日期）
 
-### 11.7 开发说明
+### 11.8 开发说明
 
 **本地启动方式（开发期）：**
 ```bash

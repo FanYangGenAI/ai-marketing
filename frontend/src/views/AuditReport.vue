@@ -49,10 +49,10 @@
           <div class="px-5 py-4 border-b border-gray-100">
             <h3 class="font-semibold text-gray-800">条目明细（{{ audit.items?.length || 0 }} 项）</h3>
           </div>
-          <div class="overflow-x-auto">
+          <div class="overflow-x-auto overflow-y-auto max-h-[60vh]">
             <table class="w-full">
               <thead>
-                <tr class="bg-gray-50 border-b border-gray-200">
+                <tr class="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
                   <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">条目</th>
                   <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">类别</th>
                   <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">投票</th>

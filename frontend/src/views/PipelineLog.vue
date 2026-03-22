@@ -73,17 +73,17 @@
             <!-- Markdown -->
             <div
               v-if="fileContent.type === 'markdown'"
-              class="prose px-6 py-5 max-w-none text-sm"
+              class="prose px-6 py-5 max-w-none text-sm max-h-[70vh] overflow-y-auto"
               v-html="renderedMarkdown"
             />
             <!-- JSON -->
             <pre
               v-else-if="fileContent.type === 'json'"
-              class="p-5 text-xs overflow-x-auto bg-gray-900 text-gray-100 rounded-xl m-0"
+              class="p-5 text-xs overflow-x-auto overflow-y-auto bg-gray-900 text-gray-100 rounded-xl m-0 max-h-[70vh]"
               v-html="renderedJson"
             />
             <!-- Plain text -->
-            <pre v-else class="p-5 text-xs overflow-x-auto whitespace-pre-wrap bg-gray-50 rounded-xl m-0 text-gray-700">{{ fileContent.content }}</pre>
+            <pre v-else class="p-5 text-xs overflow-x-auto overflow-y-auto whitespace-pre-wrap bg-gray-50 rounded-xl m-0 text-gray-700 max-h-[70vh]">{{ fileContent.content }}</pre>
           </div>
         </div>
       </div>
