@@ -138,76 +138,13 @@
 
 ---
 
-## 阶段十：展示层 Frontend + FastAPI（新增）
-
-> 目标：提供本地 Web 界面，让用户浏览、审阅所有 Pipeline 输出数据，下载投放物料。当前阶段只读。
-> 技术栈：FastAPI（Python）+ Vite + Vue 3 + Tailwind CSS
-> 详细设计见：`docs/system-design-draft.md` § 11
-
-### 后端（FastAPI）
-
-- [ ] **#15a** `server/main.py` + `server/routers/campaigns.py`
-  - FastAPI 应用入口，CORS 配置，静态文件服务（生产模式 serve `frontend/dist/`）
-  - 实现全部只读路由：
-    - `GET /api/products` → 扫描 `campaigns/` 返回产品列表
-    - `GET /api/products/{product}/dates` → 返回日期列表 + 每日状态摘要
-    - `GET /api/products/{product}/{date}/state` → pipeline state
-    - `GET /api/products/{product}/{date}/package` → post_package.json
-    - `GET /api/products/{product}/{date}/audit` → audit_result.json
-    - `GET /api/products/{product}/{date}/file?path=` → 任意文本文件（路径限 campaigns/）
-    - `GET /api/products/{product}/assets` → asset_library/index.json
-    - `GET /api/products/{product}/memory/{platform}` → lessons_{platform}.json
-
-- [ ] **#15b** `server/routers/images.py`
-  - `GET /api/images?path=` → 读取图片二进制，路径限 `campaigns/` 目录内
-
-### 前端（Vue 3 + Vite）
-
-- [ ] **#15c** 项目脚手架 + Sidebar 导航
-  - `frontend/` 目录初始化（`npm create vite`，Vue 3 + Tailwind）
-  - `vite.config.js`：`/api` 代理到 `http://localhost:8000`
-  - `Sidebar.vue`：产品/日期导航树，点击切换主视图
-  - `App.vue`：路由切换（vue-router 或手动状态）
-
-- [ ] **#15d** Overview + PostDetail 视图
-  - `Overview.vue`：Pipeline 阶段状态列表 + 帖子摘要卡片
-  - `PostDetail.vue`：小红书风格帖子预览卡片（CSS 模拟）
-    - `ImageCarousel.vue`：图片轮播，支持点击大图预览（lightbox）
-    - 每张图片：[下载] 按钮 → `<a download>` 触发浏览器下载
-    - [复制标题] / [复制正文] / [复制话题标签] → `navigator.clipboard.writeText()`
-
-- [ ] **#15e** AuditReport + PipelineLog 视图
-  - `AuditReport.vue`：12 条目表格，含 3 票明细展开、重试历史
-  - `PipelineLog.vue`：阶段折叠列表，右侧 Markdown / JSON 预览面板
-    - Markdown：marked.js 渲染
-    - JSON：语法高亮（highlight.js 或 prism.js）
-
-- [ ] **#15f** AssetLibrary + LessonMemory 视图
-  - `AssetLibrary.vue`：图片网格，支持 type/date 筛选，点击查看 prompt + 下载
-  - `LessonMemory.vue`：经验记忆表格，展开显示规则全文和反例
-
----
-
-## 执行顺序（更新）
+## 执行顺序
 
 ```
 （已完成）
 #8a → #9a → #9b → #9c → #9e → #9d → #10a → #10 → #11
 
-（下一阶段：展示层）
-#15a (FastAPI 后端 + 基础路由)
-    ↓
-#15b (图片服务)
-    ↓
-#15c (Vue 项目脚手架 + Sidebar)
-    ↓
-#15d (Overview + PostDetail，含图片下载/复制文案)
-    ↓
-#15e (AuditReport + PipelineLog)
-    ↓
-#15f (AssetLibrary + LessonMemory)
-
-（后续）
+（待启动）
 #12 → #13 → #14 （单元测试 + 集成测试）
 ```
 
@@ -238,9 +175,3 @@
 | 12 | Agent 单元测试 | ⬜ 待开始 |
 | 13 | Pipeline 集成测试 | ⬜ 待开始 |
 | 14 | 完整链路手动验证 | ✅ 已完成（2026-03-22 原语首跑验收） |
-| 15a | FastAPI 后端 + 路由 | ⬜ 待开始 |
-| 15b | 图片文件服务 | ⬜ 待开始 |
-| 15c | Vue 脚手架 + Sidebar 导航 | ⬜ 待开始 |
-| 15d | Overview + PostDetail（下载/复制） | ⬜ 待开始 |
-| 15e | AuditReport + PipelineLog | ⬜ 待开始 |
-| 15f | AssetLibrary + LessonMemory | ⬜ 待开始 |
