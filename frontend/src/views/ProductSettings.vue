@@ -3,7 +3,7 @@
     <div class="bg-white border-b border-gray-200 px-6 py-4">
       <div class="max-w-3xl mx-auto flex items-center gap-3">
         <h2 class="text-lg font-bold text-gray-900">{{ product }} — 产品设置</h2>
-        <span class="text-sm text-gray-500">PRD、参考文档与需求描述</span>
+        <span class="text-sm text-gray-500">PRD、附件文件与需求描述</span>
       </div>
     </div>
 
@@ -72,9 +72,10 @@
 
         <!-- Reference attachments -->
         <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-          <h3 class="font-semibold text-gray-800 mb-1">参考文档（可选）</h3>
+          <h3 class="font-semibold text-gray-800 mb-1">附件文件（可选）</h3>
           <p class="text-xs text-gray-500 mb-3">
-            保存到 <code class="text-gray-700 bg-gray-100 px-1 rounded">docs/materials/</code>，便于与 PRD 一起人工查阅；流水线默认仍以 PRD + user_brief 为主。
+            保存到 <code class="text-gray-700 bg-gray-100 px-1 rounded">docs/materials/</code>（图片、截图、视频、文档等）。
+            当前版本<strong class="text-gray-700">不会</strong>自动送入 LLM 或写入素材库；仅便于本地归档与后续扩展。
           </p>
           <label class="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-800 cursor-pointer mb-3">
             <span>选择文件（可多选）</span>
@@ -87,14 +88,14 @@
             class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg"
             @click="uploadAttachments"
           >
-            {{ attachUploading ? '上传中…' : '上传参考文档' }}
+            {{ attachUploading ? '上传中…' : '上传附件文件' }}
           </button>
           <p v-if="attachMessage" class="text-xs mt-2" :class="attachError ? 'text-red-600' : 'text-green-600'">
             {{ attachMessage }}
           </p>
 
           <div v-if="materialFiles.length" class="mt-4 border-t border-gray-100 pt-4">
-            <h4 class="text-sm font-medium text-gray-700 mb-2">已上传参考文件</h4>
+            <h4 class="text-sm font-medium text-gray-700 mb-2">已上传附件</h4>
             <ul class="text-sm text-gray-600 space-y-1 font-mono text-xs">
               <li v-for="f in materialFiles" :key="f.path">{{ f.name }} ({{ formatSize(f.size) }})</li>
             </ul>

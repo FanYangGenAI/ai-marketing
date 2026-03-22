@@ -32,7 +32,7 @@ class MockLLMClient(BaseLLMClient):
 @pytest.fixture
 def campaign_root(tmp_path) -> Path:
     root = tmp_path / "campaigns" / "TestProduct"
-    for subdir in ["strategy", "memory", "daily", "config"]:
+    for subdir in ["memory", "daily", "config"]:
         (root / subdir).mkdir(parents=True)
     return root
 
@@ -75,6 +75,8 @@ async def test_strategist_cold_start_writes_strategy_file(campaign_root, context
 
     # AgentOutput 元数据检查
     assert output.output_path == context.strategy_path
+    assert context.strategy_latest_mirror_path.exists()
+    assert context.strategy_latest_mirror_path.read_text(encoding="utf-8") == content
     assert output.data["is_cold_start"] is True
     assert "冷启动" in output.data["start_mode"]
 
@@ -153,7 +155,7 @@ async def test_strategist_reads_user_brief_from_context(campaign_root, context):
 
 @pytest.mark.asyncio
 async def test_strategist_writes_debate_log(campaign_root, context):
-    """Strategist 应写入 strategy/strategy_debate_{date}.md 辩论日志。"""
+    """Strategist 应写入 daily/.../strategy/strategy_debate.md 辩论日志。"""
     from src.agents.strategist.strategist import StrategistAgent
 
     mock_client = MockLLMClient("策略内容")
@@ -165,5 +167,5 @@ async def test_strategist_writes_debate_log(campaign_root, context):
 
     await agent.run(context)
 
-    log_path = campaign_root / "strategy" / "strategy_debate_2026-03-22.md"
+    log_path = context.daily_folder / "strategy" / "strategy_debate.md"
     assert log_path.exists()

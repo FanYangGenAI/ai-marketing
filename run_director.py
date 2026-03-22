@@ -22,7 +22,9 @@ import io
 handler = logging.StreamHandler(
     stream=io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 )
-handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)-5s] %(name)s: %(message)s", "%H:%M:%S"))
+handler.setFormatter(logging.Formatter(
+    "%(asctime)s [%(levelname)-5s] %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S"
+))
 logging.basicConfig(level=logging.INFO, handlers=[handler])
 log = logging.getLogger("run_director")
 

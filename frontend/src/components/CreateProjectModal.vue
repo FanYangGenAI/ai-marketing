@@ -66,8 +66,8 @@
 
         <!-- Reference files (optional) -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">参考文档（可选，可多选）</label>
-          <p class="text-xs text-gray-500 mb-2">保存到 docs/materials/，供查阅；创建完成后也可在「产品设置」中补传。</p>
+          <label class="block text-sm font-medium text-gray-700 mb-1">附件文件（可选，可多选）</label>
+          <p class="text-xs text-gray-500 mb-2">图片、截图、视频、文档等保存到 docs/materials/；当前不会自动参与流水线。可在「产品设置」中补传。</p>
           <label class="inline-flex items-center px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-800 cursor-pointer">
             选择文件
             <input

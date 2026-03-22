@@ -45,7 +45,7 @@ def campaigns_root(tmp_path) -> Path:
 @pytest.fixture
 def product_dir(campaigns_root) -> Path:
     product = campaigns_root / "TestProduct"
-    for sub in ["config", "docs", "strategy", "memory", "asset_library", "daily"]:
+    for sub in ["config", "docs", "memory", "asset_library", "daily"]:
         (product / sub).mkdir(parents=True)
     return product
 

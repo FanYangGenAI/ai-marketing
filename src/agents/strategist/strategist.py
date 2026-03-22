@@ -6,7 +6,8 @@ StrategistAgent — 每次 Pipeline 的强制第一步。
   2. 读取 LessonMemory 正向/负向经验信号
   3. 判断冷/热启动：LessonMemory 中有正向经验 → 热启动，否则 → 冷启动
   4. 通过 Debate→Synthesize 生成策略建议文档
-  5. 输出到 campaigns/{product}/strategy_suggestion.md（覆盖上次）
+  5. 输出到 daily/{date}/strategy/strategy_suggestion.md（当日专属）；
+     并镜像到 campaigns/{product}/strategy_suggestion.md（全局「最新一份」）
 
 Debate 组成：
   DataAnalyst    (Gemini)  ：分析历史经验数据、市场规律
@@ -133,7 +134,8 @@ class StrategistAgent(BaseAgent):
         moderator_system = _MODERATOR_SYSTEM.replace("{date}", date_str)
 
         # ── Debate → Synthesize ───────────────────────────────────────────────
-        log_path = context.campaign_root / "strategy" / f"strategy_debate_{date_str}.md"
+        # Debate log lives under the same daily folder (no date in filename)
+        log_path = context.daily_folder / "strategy" / "strategy_debate.md"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
         result = await debate_and_synthesize(
@@ -148,6 +150,8 @@ class StrategistAgent(BaseAgent):
         # ── 写入输出 ──────────────────────────────────────────────────────────
         output_path.parent.mkdir(parents=True, exist_ok=True)
         self._write_output(output_path, result.final_output)
+        # Mirror at campaign root for a stable "latest strategy" path
+        self._write_output(context.strategy_latest_mirror_path, result.final_output)
 
         summary = f"{start_mode} | 策略建议已生成（{len(result.final_output)} 字）"
         return AgentOutput(

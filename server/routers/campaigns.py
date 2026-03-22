@@ -280,7 +280,8 @@ async def create_product(req: CreateProductRequest):
         raise HTTPException(status_code=409, detail=f"产品 '{name}' 已存在")
 
     # 创建目录结构（docs/materials：参考文档与附件）
-    for subdir in ["config", "docs", "docs/materials", "strategy", "memory", "asset_library", "daily"]:
+    # Strategy artifacts live under daily/{date}/strategy/ at runtime; no product-level strategy/ folder
+    for subdir in ["config", "docs", "docs/materials", "memory", "asset_library", "daily"]:
         (product_dir / subdir).mkdir(parents=True, exist_ok=True)
 
     # 写入 product_config.json

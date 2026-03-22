@@ -350,7 +350,7 @@ class Pipeline:
                 "label": "Strategist — 策略反思（第一步，强制）",
                 "agents": ["DataAnalyst/Gemini（经验分析）", "StrategyReviewer/GPT（策略建议）", "StrategyModerator/Claude（综合输出）"],
                 "mechanism": "Debate → Synthesize（2 轮）",
-                "output": "{campaign}/strategy_suggestion.md",
+                "output": "{daily}/strategy/strategy_suggestion.md（+ {campaign}/strategy_suggestion.md 镜像）",
             },
             "planner": {
                 "icon": "🧠",

@@ -55,6 +55,15 @@ class AgentContext:
 
     @property
     def strategy_path(self) -> Path:
+        """
+        Per-day Strategist output (and Planner input) for this run.
+        Path: daily/{date}/strategy/strategy_suggestion.md
+        """
+        return self.daily_folder / "strategy" / "strategy_suggestion.md"
+
+    @property
+    def strategy_latest_mirror_path(self) -> Path:
+        """Product-level copy of the latest strategy (convenience for tools / humans)."""
         return self.campaign_root / "strategy_suggestion.md"
 
     def subdir(self, *parts: str) -> Path:

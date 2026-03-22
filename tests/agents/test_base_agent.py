@@ -58,7 +58,8 @@ def context(tmp_path) -> AgentContext:
 
 def test_agent_context_paths(context, tmp_path):
     assert context.asset_library_root == context.campaign_root / "asset_library"
-    assert context.strategy_path == context.campaign_root / "strategy_suggestion.md"
+    assert context.strategy_path == context.daily_folder / "strategy" / "strategy_suggestion.md"
+    assert context.strategy_latest_mirror_path == context.campaign_root / "strategy_suggestion.md"
 
 
 def test_agent_context_subdir(context):

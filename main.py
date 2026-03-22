@@ -102,7 +102,7 @@ async def main() -> None:
     )
     handler.setFormatter(logging.Formatter(
         fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%Y-%m-%d %H:%M:%S",
     ))
     logging.basicConfig(level=level, handlers=[handler])
     log = logging.getLogger("main")

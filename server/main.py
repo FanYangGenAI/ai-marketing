@@ -1,8 +1,57 @@
+import logging
 import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+
+# Full date+time on all log lines (uvicorn installs its own handlers after import)
+_LOG_FMT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+_LOG_DATE = "%Y-%m-%d %H:%M:%S"
+
+
+def _ts_formatter() -> logging.Formatter:
+    return logging.Formatter(_LOG_FMT, datefmt=_LOG_DATE)
+
+
+def _configure_logging() -> None:
+    """Early import-time setup (before uvicorn adds handlers)."""
+    formatter = _ts_formatter()
+    root = logging.getLogger()
+    if not root.handlers:
+        h = logging.StreamHandler(sys.stderr)
+        h.setFormatter(formatter)
+        root.addHandler(h)
+        root.setLevel(logging.INFO)
+    else:
+        for h in root.handlers:
+            h.setFormatter(formatter)
+
+
+def _apply_timestamps_to_all_handlers() -> None:
+    """
+    Uvicorn attaches StreamHandlers to uvicorn / uvicorn.error / uvicorn.access
+    after the app module loads. Re-apply formatters at startup so every line has asctime.
+    """
+    formatter = _ts_formatter()
+    seen: set[int] = set()
+
+    def touch(logger: logging.Logger) -> None:
+        for h in logger.handlers:
+            hid = id(h)
+            if hid in seen:
+                continue
+            seen.add(hid)
+            if isinstance(h, logging.Handler):
+                h.setFormatter(formatter)
+
+    touch(logging.root)
+    for name in list(logging.Logger.manager.loggerDict.keys()):
+        touch(logging.getLogger(name))
+
+
+_configure_logging()
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +68,14 @@ except ModuleNotFoundError:
         sys.path.insert(0, str(_server_dir.parent))
     from server.routers import campaigns, images
 
-app = FastAPI(title="AI Marketing API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _apply_timestamps_to_all_handlers()
+    yield
+
+
+app = FastAPI(title="AI Marketing API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

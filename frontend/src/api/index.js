@@ -99,7 +99,7 @@ export async function uploadProductPrd(product, file) {
 }
 
 /**
- * Upload reference files to docs/materials/.
+ * Upload attachment files (any type) to docs/materials/ — not auto-ingested into pipeline yet.
  * @param {File[]} files
  */
 export async function uploadProductAttachments(product, files) {

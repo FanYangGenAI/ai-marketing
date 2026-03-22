@@ -9,6 +9,30 @@
       <div v-if="loading" class="text-center py-12 text-gray-500">加载中...</div>
       <div v-else-if="loadError" class="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm">{{ loadError }}</div>
 
+      <!-- Waiting for audit file while pipeline still running toward / in audit -->
+      <div
+        v-else-if="pipelineBeforeAudit"
+        class="bg-amber-50 border border-amber-200 rounded-xl p-5 mb-5 text-amber-950"
+      >
+        <p class="font-semibold text-sm mb-1">流水线尚未到达审核</p>
+        <p class="text-sm text-amber-900 leading-relaxed">
+          当前阶段未完成 Creator。本页每 3 秒自动检查；进入审核后若耗时较长也会持续刷新。
+        </p>
+        <p v-if="silentRefreshing" class="text-xs text-amber-700 mt-2">正在拉取最新状态…</p>
+      </div>
+
+      <div
+        v-else-if="auditPending"
+        class="bg-blue-50 border border-blue-200 rounded-xl p-5 mb-5 text-blue-900"
+      >
+        <p class="font-semibold text-sm mb-1">审核进行中</p>
+        <p class="text-sm text-blue-800 leading-relaxed">
+          Creator 已完成，Audit 正在执行（含多轮视觉审核，可能持续数分钟）。
+          本页每 3 秒自动刷新，无需手动整页刷新。
+        </p>
+        <p v-if="silentRefreshing" class="text-xs text-blue-600 mt-2">正在拉取最新状态…</p>
+      </div>
+
       <template v-else-if="audit">
         <!-- Overall result banner -->
         <div
@@ -110,15 +134,18 @@
         </div>
       </template>
 
-      <div v-else class="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center text-gray-400">
-        暂无审核数据
+      <div v-else class="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center text-gray-500 text-sm">
+        <p>暂无审核结果。</p>
+        <p v-if="stateData && !stateData.creator?.done" class="mt-2 text-gray-400">
+          流水线尚未完成 Creator，请稍后再打开本页。
+        </p>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, reactive, watch } from 'vue'
+import { ref, computed, reactive, watch, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import TabBar from '../components/TabBar.vue'
 import { getAudit, getFile, getState } from '../api/index.js'
@@ -132,7 +159,42 @@ const revisionPlan = ref(null)
 const stateData = ref(null)
 const loading = ref(true)
 const loadError = ref(null)
+const silentRefreshing = ref(false)
 const expandedItems = reactive(new Set())
+
+let pollTimer = null
+
+/** Creator finished, audit not marked done — waiting for audit_result.json */
+const auditPending = computed(() => {
+  if (loadError.value) return false
+  if (audit.value) return false
+  const s = stateData.value
+  if (!s?.creator?.done) return false
+  if (s.audit?.done === true) return false
+  return true
+})
+
+/** Pipeline has not finished Creator yet; still poll so we pick up audit when ready */
+const pipelineBeforeAudit = computed(() => {
+  if (loadError.value) return false
+  if (audit.value) return false
+  const s = stateData.value
+  if (!s) return false
+  if (s.creator?.done) return false
+  if (s.audit?.done === true) return false
+  return true
+})
+
+/** Poll until we have audit JSON or state says audit.done (then load() sets error if file missing) */
+const shouldPollForAudit = computed(() => {
+  if (!product.value || !date.value) return false
+  if (audit.value) return false
+  if (loadError.value) return false
+  const s = stateData.value
+  if (!s) return false
+  if (s.audit?.done === true) return false
+  return true
+})
 
 const retryCount = computed(() => stateData.value?._retry_count ?? null)
 
@@ -159,35 +221,98 @@ function toggleItem(id) {
   }
 }
 
-async function load() {
-  loading.value = true
-  loadError.value = null
-  expandedItems.clear()
+function stopAuditPoll() {
+  if (pollTimer != null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+function startAuditPoll() {
+  if (pollTimer != null) return
+  pollTimer = setInterval(() => {
+    load({ silent: true })
+  }, 3000)
+}
+
+async function load(opts = {}) {
+  const silent = Boolean(opts.silent)
+  if (!silent) {
+    loading.value = true
+    loadError.value = null
+    expandedItems.clear()
+  } else {
+    silentRefreshing.value = true
+  }
+
   try {
     const [auditRes, stateRes] = await Promise.allSettled([
       getAudit(product.value, date.value),
       getState(product.value, date.value),
     ])
-    audit.value = auditRes.status === 'fulfilled' ? auditRes.value : null
-    stateData.value = stateRes.status === 'fulfilled' ? stateRes.value : null
 
-    if (!audit.value) {
-      loadError.value = '无法加载审核数据'
+    const stateOk = stateRes.status === 'fulfilled'
+    stateData.value = stateOk ? stateRes.value : null
+
+    if (!stateOk) {
+      audit.value = null
+      loadError.value = '无法加载流水线状态（请确认日期与产品目录存在）'
+      stopAuditPoll()
+      return
     }
 
-    // Try to load revision_plan.json
-    try {
-      const revFile = await getFile(product.value, date.value, 'audit/revision_plan.json')
-      revisionPlan.value = JSON.parse(revFile.content)
-    } catch {
-      revisionPlan.value = null
+    if (auditRes.status === 'fulfilled' && auditRes.value) {
+      audit.value = auditRes.value
+      loadError.value = null
+      stopAuditPoll()
+
+      try {
+        const revFile = await getFile(product.value, date.value, 'audit/revision_plan.json')
+        revisionPlan.value = JSON.parse(revFile.content)
+      } catch {
+        revisionPlan.value = null
+      }
+      return
     }
+
+    audit.value = null
+    revisionPlan.value = null
+
+    const st = stateData.value
+    if (st.audit?.done === true) {
+      loadError.value = '流水线显示审核已完成，但未找到 audit/audit_result.json（请检查文件是否被删除）'
+      stopAuditPoll()
+      return
+    }
+
+    loadError.value = null
   } catch (e) {
-    loadError.value = e.message
+    if (!silent) loadError.value = e.message || String(e)
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
+    silentRefreshing.value = false
   }
 }
 
-watch([product, date], load, { immediate: true })
+watch(
+  () => [product.value, date.value],
+  () => {
+    stopAuditPoll()
+    load({ silent: false })
+  },
+  { immediate: true }
+)
+
+watch(
+  shouldPollForAudit,
+  (v) => {
+    if (v) startAuditPoll()
+    else stopAuditPoll()
+  },
+  { immediate: true }
+)
+
+onUnmounted(() => {
+  stopAuditPoll()
+})
 </script>

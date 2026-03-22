@@ -112,6 +112,14 @@ const fileError = ref(null)
 
 const STAGE_CONFIG = [
   {
+    key: 'strategist',
+    label: '策略 (Strategist)',
+    files: [
+      { path: 'strategy/strategy_suggestion.md', label: 'strategy_suggestion.md', icon: '📄' },
+      { path: 'strategy/strategy_debate.md', label: 'strategy_debate.md', icon: '💬' },
+    ],
+  },
+  {
     key: 'planner',
     label: '规划师 (Planner)',
     files: [
