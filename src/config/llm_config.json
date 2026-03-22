@@ -1,0 +1,17 @@
+{
+  "planner_a":              "gemini-2.5-flash",
+  "planner_b":              "gemini-2.5-flash",
+  "planner_c":              "gpt-5-nano",
+  "planner_moderator":      "gemini-2.5-flash",
+  "scriptwriter_a":         "gpt-5-nano",
+  "scriptwriter_b":         "gemini-2.5-flash",
+  "scriptwriter_c":         "gpt-5-nano",
+  "scriptwriter_moderator": "gemini-2.5-flash",
+  "director":               "gemini-2.5-flash",
+  "creator":                "gemini-2.5-flash",
+  "auditor":                "gemini-2.5-flash",
+  "reviser":                "gemini-2.5-flash",
+  "strategy_analyst":       "gemini-2.5-flash",
+  "strategy_reviewer":      "gpt-5-nano",
+  "strategy_moderator":     "gemini-2.5-flash"
+}

@@ -28,17 +28,37 @@ def parse_color(hex_color: str) -> tuple[int, int, int, int]:
     return r, g, b, a
 
 
+_CJK_FONT_CANDIDATES = [
+    # Windows
+    "C:/Windows/Fonts/msyh.ttc",       # 微软雅黑
+    "C:/Windows/Fonts/simsun.ttc",     # 宋体
+    # macOS
+    "/System/Library/Fonts/PingFang.ttc",
+    "/Library/Fonts/Arial Unicode MS.ttf",
+    # Linux
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+]
+
+
 def load_font(font_path: str | None, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """加载字体，若路径无效则回退到 Pillow 默认字体。"""
+    """加载字体。优先使用指定路径；未指定时自动探测系统 CJK 字体；最后回退到 Pillow 默认字体。"""
     if font_path:
         try:
             return ImageFont.truetype(font_path, size)
         except (OSError, IOError):
-            print(f"⚠️  字体文件未找到: {font_path}，使用默认字体", file=sys.stderr)
+            print(f"⚠️  字体文件未找到: {font_path}，尝试系统 CJK 字体", file=sys.stderr)
+    for candidate in _CJK_FONT_CANDIDATES:
+        try:
+            font = ImageFont.truetype(candidate, size)
+            print(f"ℹ️  使用系统 CJK 字体: {candidate}", file=sys.stderr)
+            return font
+        except (OSError, IOError):
+            continue
+    print("⚠️  未找到 CJK 字体，使用 Pillow 默认字体（中文可能显示为方块）", file=sys.stderr)
     try:
         return ImageFont.load_default(size=size)
     except TypeError:
-        # Pillow < 10.0 的 load_default 不支持 size 参数
         return ImageFont.load_default()
 
 
