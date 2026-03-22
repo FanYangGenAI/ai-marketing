@@ -215,3 +215,7 @@ campaigns/
 # ── AI Marketing: Playwright browser auth state ───────────────────────────────
 src/config/gemini_auth.json
 src/config/*_auth.json
+
+# Frontend node_modules and build output
+frontend/node_modules/
+frontend/dist/
