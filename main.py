@@ -116,13 +116,27 @@ async def main() -> None:
             log.error(f"日期格式错误: {args.date}，请使用 YYYY-MM-DD")
             sys.exit(1)
 
-    # 验证 PRD 路径
+    # 验证 PRD 路径：优先用 --prd 参数，否则从 product_config.json 自动读取
     prd_path = None
     if args.prd:
         prd_path = args.prd.resolve()
         if not prd_path.exists():
             log.warning(f"PRD 文件未找到: {prd_path}，将跳过 PRD 读取")
             prd_path = None
+    else:
+        product_cfg = args.campaigns_root / args.product / "config" / "product_config.json"
+        if product_cfg.exists():
+            import json as _json
+            cfg = _json.loads(product_cfg.read_text(encoding="utf-8"))
+            if cfg.get("prd_path"):
+                auto_prd = Path(cfg["prd_path"])
+                if not auto_prd.is_absolute():
+                    auto_prd = Path(__file__).parent / auto_prd
+                if auto_prd.exists():
+                    prd_path = auto_prd
+                    log.info(f"   PRD 自动加载自 product_config.json: {prd_path}")
+                else:
+                    log.warning(f"product_config.json 中 prd_path 未找到: {auto_prd}")
 
     log.info(f"🚀 启动 AI Marketing Pipeline")
     log.info(f"   产品：{args.product}")

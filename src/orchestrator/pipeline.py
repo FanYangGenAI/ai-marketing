@@ -56,7 +56,6 @@ class Pipeline:
         """首次运行时延迟初始化所有 LLM 客户端和 Agent。"""
         if self._agents_initialized:
             return
-        from src.llm.claude_client import ClaudeClient
         from src.llm.gemini_client import GeminiClient
         from src.llm.openai_client import OpenAIClient
         from src.agents.audit.audit import AuditAgent
@@ -69,9 +68,9 @@ class Pipeline:
         # 从 llm_config.json 读取模型配置
         cfg = self._load_llm_config()
 
-        self._claude = ClaudeClient(model=cfg.get("planner_b", "claude-opus-4-6"))
         self._openai = OpenAIClient(model=cfg.get("planner_c", "gpt-5-nano"))
         self._gemini = GeminiClient(model=cfg.get("planner_a", "gemini-2.5-flash"))
+        self._claude = GeminiClient(model=cfg.get("planner_b", "gemini-2.5-flash"))
 
         # Gemini for auditor（可配置为不同模型）
         auditor_model = cfg.get("auditor", "gemini-2.5-flash")

@@ -73,7 +73,7 @@ class ReviserAgent(BaseAgent):
             )
 
         audit_result = json.loads(audit_result_path.read_text(encoding="utf-8"))
-        all_items = audit_result.get("items", [])
+        all_items = audit_result.get("items", []) + audit_result.get("visual_items", [])
         failed_items = [item for item in all_items if not item.get("passed", True)]
 
         if not failed_items:

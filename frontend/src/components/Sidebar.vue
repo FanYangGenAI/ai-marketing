@@ -135,17 +135,42 @@ async function loadDates(product) {
 onMounted(async () => {
   try {
     products.value = await getProducts()
-    if (products.value.length > 0) {
-      const first = products.value[0]
-      expandedProducts.add(first)
-      await loadDates(first)
 
-      // Navigate to first date if on root
-      if (route.path === '/' || route.path === '/products') {
-        const dates = datesByProduct[first]
-        if (dates && dates.length > 0) {
-          router.push(`/${encodeURIComponent(first)}/${dates[0].date}`)
+    // Load all products' dates to find the best one to auto-navigate to
+    for (const product of products.value) {
+      await loadDates(product)
+    }
+
+    // Expand all products that have dates
+    for (const product of products.value) {
+      if (datesByProduct[product]?.length > 0) {
+        expandedProducts.add(product)
+      }
+    }
+
+    // Auto-navigate only if on root: find first product+date with real data (stages_done > 0)
+    if (route.path === '/' || route.path === '/products') {
+      let target = null
+      for (const product of products.value) {
+        const dates = datesByProduct[product] || []
+        const withData = dates.find(d => d.stages_done > 0)
+        if (withData) {
+          target = { product, date: withData.date }
+          break
         }
+      }
+      // Fall back to first product/date if nothing has data
+      if (!target) {
+        for (const product of products.value) {
+          const dates = datesByProduct[product] || []
+          if (dates.length > 0) {
+            target = { product, date: dates[0].date }
+            break
+          }
+        }
+      }
+      if (target) {
+        router.push(`/${encodeURIComponent(target.product)}/${target.date}`)
       }
     }
   } catch (e) {

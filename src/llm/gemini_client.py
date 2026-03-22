@@ -117,6 +117,50 @@ class GeminiClient(BaseLLMClient):
         text = response.text or "[]"
         return json.loads(text)
 
+    async def chat_structured_with_images(
+        self,
+        text: str,
+        image_paths: list,
+        response_schema: dict,
+        system: str | None = None,
+        max_tokens: int = 8192,
+        temperature: float = 0.1,
+    ) -> list | dict:
+        """
+        多模态结构化调用：同时传入图片和文字，返回符合 schema 的 JSON。
+
+        Args:
+            text:            文字提示
+            image_paths:     图片文件路径列表（Path 或 str）
+            response_schema: JSON Schema dict
+            system:          系统提示
+        """
+        parts = []
+        for img_path in image_paths:
+            p = Path(img_path)
+            if p.exists():
+                mime = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
+                parts.append(types.Part.from_bytes(data=p.read_bytes(), mime_type=mime))
+        parts.append(types.Part(text=text))
+
+        contents = [types.Content(role="user", parts=parts)]
+        config = types.GenerateContentConfig(
+            system_instruction=system or "",
+            max_output_tokens=max_tokens,
+            temperature=temperature,
+            response_mime_type="application/json",
+            response_schema=response_schema,
+        )
+
+        response = await self._client.aio.models.generate_content(
+            model=self._model_name,
+            contents=contents,
+            config=config,
+        )
+
+        import json as _json
+        return _json.loads(response.text or "[]")
+
     async def generate_image(
         self,
         prompt: str,

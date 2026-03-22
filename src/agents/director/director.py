@@ -191,7 +191,12 @@ class DirectorAgent(BaseAgent):
             if source == "reuse":
                 raw_path = self._resolve_reuse(task, asset_lib)
             elif source == "screenshot":
-                raw_path = await self._run_screenshot(task, raw_dir, campaign_root)
+                try:
+                    raw_path = await self._run_screenshot(task, raw_dir, campaign_root)
+                except Exception as screenshot_err:
+                    # screenshot 失败（selector 不存在、页面未加载等）→ 降级为 AI 生成
+                    logger.warning(f"{task_id}: screenshot 失败，降级为 generate: {screenshot_err}")
+                    raw_path = await self._run_imagegen(task, raw_dir)
             else:  # generate
                 raw_path = await self._run_imagegen(task, raw_dir)
 

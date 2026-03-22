@@ -168,9 +168,7 @@ async function load() {
     ])
     state.value = stateData.status === 'fulfilled' ? stateData.value : null
     pkg.value = pkgData.status === 'fulfilled' ? pkgData.value : null
-    if (!state.value && !pkg.value) {
-      loadError.value = '无法加载数据，请确认日期是否正确'
-    }
+    // Both null just means no pipeline has run yet for this date — not an error
   } catch (e) {
     loadError.value = e.message
   } finally {

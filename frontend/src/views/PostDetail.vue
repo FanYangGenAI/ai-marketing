@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-gray-50">
+  <div class="h-screen overflow-hidden bg-gray-50 flex flex-col">
     <!-- Tab bar -->
     <div class="bg-white border-b border-gray-200 sticky top-0 z-10">
       <TabBar :product="product" :date="date" />
@@ -10,10 +10,9 @@
       <div class="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm">{{ loadError }}</div>
     </div>
 
-    <div v-else class="px-6 py-6">
-      <div class="flex flex-col lg:flex-row gap-6 max-w-5xl mx-auto">
+    <div v-else class="flex flex-col lg:flex-row gap-6 px-6 py-6 h-[calc(100vh-49px)] overflow-hidden">
         <!-- Left: XHS-style post card -->
-        <div class="lg:w-[370px] flex-shrink-0">
+        <div class="lg:w-[370px] flex-shrink-0 overflow-y-auto">
           <div class="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden max-w-[370px] mx-auto">
             <!-- Image carousel -->
             <ImageCarousel
@@ -51,13 +50,13 @@
         </div>
 
         <!-- Right panel -->
-        <div class="flex-1 min-w-0 space-y-5">
-          <!-- Image list -->
-          <div class="bg-white rounded-xl shadow-sm border border-gray-200">
-            <div class="px-5 py-3 border-b border-gray-100">
+        <div class="flex-1 min-w-0 flex flex-col gap-5 overflow-hidden">
+          <!-- Image list - scrollable, fills available space -->
+          <div class="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col flex-1 overflow-hidden">
+            <div class="px-5 py-3 border-b border-gray-100 flex-shrink-0">
               <h3 class="font-semibold text-gray-800">图片列表</h3>
             </div>
-            <div class="divide-y divide-gray-100">
+            <div class="divide-y divide-gray-100 overflow-y-auto flex-1">
               <div
                 v-for="img in pkg.images || []"
                 :key="img.order"
@@ -88,8 +87,8 @@
             </div>
           </div>
 
-          <!-- Copy actions -->
-          <div class="bg-white rounded-xl shadow-sm border border-gray-200">
+          <!-- Copy actions - fixed at bottom -->
+          <div class="bg-white rounded-xl shadow-sm border border-gray-200 flex-shrink-0">
             <div class="px-5 py-3 border-b border-gray-100">
               <h3 class="font-semibold text-gray-800">文案操作</h3>
             </div>
@@ -121,7 +120,6 @@
             </div>
           </div>
         </div>
-      </div>
     </div>
 
     <!-- Lightbox -->
@@ -148,7 +146,7 @@
         <img
           :src="imageUrl(lightboxImages[lightboxIndex]?.path)"
           :alt="lightboxImages[lightboxIndex]?.caption || ''"
-          class="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
+          class="block w-auto h-auto max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl"
         />
         <button
           v-if="lightboxImages.length > 1"
