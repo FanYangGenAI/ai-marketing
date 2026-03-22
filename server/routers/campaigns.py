@@ -7,13 +7,16 @@ from datetime import date as date_cls
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server.config import CAMPAIGNS_ROOT
 
 router = APIRouter()
+
+# Max bytes per uploaded file (PRD or attachment)
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 
 # ── Pydantic 请求体模型 ────────────────────────────────────────────────────────
 
@@ -44,6 +47,62 @@ def _read_json(path: Path) -> Any:
     """Read and parse a JSON file."""
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _safe_filename(name: str) -> str:
+    """ASCII-safe basename for stored files (no path segments)."""
+    base = Path(name).name
+    if not base:
+        return "upload.dat"
+    cleaned = re.sub(r"[^\w.\-]", "_", base)
+    if not cleaned or cleaned in (".", ".."):
+        return "upload.dat"
+    return cleaned[:180]
+
+
+def _unique_path(directory: Path, filename: str) -> Path:
+    """Pick a non-existing path under directory."""
+    directory.mkdir(parents=True, exist_ok=True)
+    candidate = directory / filename
+    if not candidate.exists():
+        return candidate
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    for i in range(1, 1000):
+        alt = directory / f"{stem}_{i}{suffix}"
+        if not alt.exists():
+            return alt
+    raise HTTPException(status_code=500, detail="Too many files with the same name")
+
+
+def _relative_to_repo(repo_root: Path, absolute_file: Path) -> str:
+    """Path string for product_config prd_path (posix, relative to repo root when possible)."""
+    try:
+        rel = absolute_file.resolve().relative_to(repo_root.resolve())
+        return rel.as_posix()
+    except ValueError:
+        return str(absolute_file.resolve()).replace("\\", "/")
+
+
+async def _save_upload_stream(dest: Path, upload: UploadFile) -> None:
+    """Write upload to dest with size limit."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    total = 0
+    chunk_size = 1024 * 1024
+    with open(dest, "wb") as out:
+        while True:
+            chunk = await upload.read(chunk_size)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_UPLOAD_BYTES:
+                out.close()
+                dest.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File exceeds limit of {MAX_UPLOAD_BYTES // (1024 * 1024)} MB",
+                )
+            out.write(chunk)
 
 
 @router.get("/api/products")
@@ -220,8 +279,8 @@ async def create_product(req: CreateProductRequest):
     if product_dir.exists():
         raise HTTPException(status_code=409, detail=f"产品 '{name}' 已存在")
 
-    # 创建目录结构
-    for subdir in ["config", "docs", "strategy", "memory", "asset_library", "daily"]:
+    # 创建目录结构（docs/materials：参考文档与附件）
+    for subdir in ["config", "docs", "docs/materials", "strategy", "memory", "asset_library", "daily"]:
         (product_dir / subdir).mkdir(parents=True, exist_ok=True)
 
     # 写入 product_config.json
@@ -260,6 +319,114 @@ async def get_config(product: str):
     if not config_path.exists():
         raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
     return _read_json(config_path)
+
+
+@router.get("/api/products/{product}/documents")
+async def list_product_documents(product: str):
+    """List PRD path from config and files under docs/ and docs/materials/."""
+    product_dir = CAMPAIGNS_ROOT / product
+    if not product_dir.exists():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+
+    config_path = product_dir / "config" / "product_config.json"
+    prd_path = None
+    if config_path.exists():
+        try:
+            prd_path = _read_json(config_path).get("prd_path")
+        except Exception:
+            pass
+
+    docs_root = product_dir / "docs"
+    materials_dir = docs_root / "materials"
+    entries: List[Dict[str, Any]] = []
+
+    def push_file(abs_path: Path, category: str) -> None:
+        if not abs_path.is_file():
+            return
+        rel = abs_path.relative_to(product_dir)
+        try:
+            sz = abs_path.stat().st_size
+        except OSError:
+            sz = 0
+        entries.append(
+            {
+                "name": abs_path.name,
+                "path": rel.as_posix(),
+                "size": sz,
+                "category": category,
+            }
+        )
+
+    if docs_root.exists():
+        for p in sorted(docs_root.iterdir()):
+            if p.is_file():
+                push_file(p, "docs")
+        if materials_dir.exists():
+            for p in sorted(materials_dir.iterdir()):
+                if p.is_file():
+                    push_file(p, "materials")
+
+    return {"prd_path": prd_path, "files": entries}
+
+
+@router.post("/api/products/{product}/documents/prd")
+async def upload_product_prd(product: str, file: UploadFile = File(...)):
+    """Upload PRD file to campaigns/{product}/docs/, set product_config prd_path."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing file")
+
+    product_dir = CAMPAIGNS_ROOT / product
+    if not product_dir.exists():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+
+    config_path = product_dir / "config" / "product_config.json"
+    if not config_path.exists():
+        raise HTTPException(status_code=404, detail="Missing product_config.json")
+
+    docs_dir = product_dir / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    fname = _safe_filename(file.filename)
+    dest = _unique_path(docs_dir, fname)
+    await _save_upload_stream(dest, file)
+
+    repo_root = _get_repo_root().resolve()
+    prd_rel = _relative_to_repo(repo_root, dest)
+
+    config = _read_json(config_path)
+    config["prd_path"] = prd_rel
+    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {"status": "ok", "prd_path": prd_rel}
+
+
+@router.post("/api/products/{product}/documents/attachments")
+async def upload_product_attachments(
+    product: str,
+    files: List[UploadFile] = File(...),
+):
+    """Upload reference files to campaigns/{product}/docs/materials/."""
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded")
+
+    product_dir = CAMPAIGNS_ROOT / product
+    if not product_dir.exists():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+
+    materials_dir = product_dir / "docs" / "materials"
+    repo_root = _get_repo_root().resolve()
+    saved: List[str] = []
+
+    for up in files:
+        if not up.filename:
+            continue
+        dest = _unique_path(materials_dir, _safe_filename(up.filename))
+        await _save_upload_stream(dest, up)
+        saved.append(_relative_to_repo(repo_root, dest))
+
+    if not saved:
+        raise HTTPException(status_code=400, detail="No valid files uploaded")
+
+    return {"status": "ok", "paths": saved}
 
 
 @router.get("/api/products/{product}/run/status")

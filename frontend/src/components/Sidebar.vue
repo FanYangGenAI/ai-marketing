@@ -49,7 +49,7 @@
           >加载中...</div>
 
           <router-link
-            v-for="entry in (datesByProduct[product] || [])"
+            v-for="entry in displayDateEntries(product)"
             :key="entry.date"
             :to="`/${encodeURIComponent(product)}/${entry.date}`"
             class="flex items-center px-3 py-1.5 text-xs rounded mx-1 transition-colors"
@@ -58,7 +58,7 @@
               : 'text-gray-300 hover:bg-gray-700'"
           >
             <span class="mr-1.5 text-sm">{{ statusIcon(entry.audit_passed) }}</span>
-            <span>{{ entry.date }}</span>
+            <span>{{ entry.date }}{{ entry._synthetic ? ' · 未跑流水线' : '' }}</span>
             <span class="ml-auto flex items-center gap-1">
               <span class="text-gray-400 text-xs">{{ entry.stages_done }}/6</span>
               <span v-if="entry.feedback" class="text-xs">{{ entry.feedback === 'accept' ? '✅' : '❌' }}</span>
@@ -91,6 +91,15 @@
           >
             <span>🧠</span> 经验记忆
           </router-link>
+          <router-link
+            :to="`/${encodeURIComponent(activeProduct)}/settings`"
+            class="flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors"
+            :class="isProductSettingsActive
+              ? 'bg-blue-600 text-white'
+              : 'text-gray-300 hover:bg-gray-700'"
+          >
+            <span>⚙</span> 产品设置
+          </router-link>
         </div>
       </template>
       <div v-else class="px-4 py-2 text-xs text-gray-500">选择产品查看</div>
@@ -118,6 +127,38 @@ const activeProduct = computed(() => {
   const params = route.params
   return params.product ? decodeURIComponent(params.product) : null
 })
+
+const isProductSettingsActive = computed(() => route.name === 'ProductSettings')
+
+/** Local calendar date YYYY-MM-DD (pipeline daily folders use this). */
+function todayIsoLocal() {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/**
+ * API only returns dates that already have a daily/ folder. New products have none —
+ * inject today so the user can open Overview and run the pipeline.
+ */
+function displayDateEntries(product) {
+  const rows = datesByProduct[product]
+  if (rows === undefined) return []
+  const today = todayIsoLocal()
+  const byDate = new Map(rows.map((d) => [d.date, { ...d, _synthetic: false }]))
+  if (!byDate.has(today)) {
+    byDate.set(today, {
+      date: today,
+      audit_passed: null,
+      stages_done: 0,
+      feedback: null,
+      _synthetic: true,
+    })
+  }
+  return Array.from(byDate.values()).sort((a, b) => b.date.localeCompare(a.date))
+}
 
 function statusIcon(auditPassed) {
   if (auditPassed === true) return '✅'
@@ -148,7 +189,9 @@ async function onProductCreated(name) {
     products.value = await getProducts()
     await loadDates(name)
     expandedProducts.add(name)
-    router.push(`/${encodeURIComponent(name)}`)
+    // Must include a date segment — route is /:product/:date, not /:product
+    const today = todayIsoLocal()
+    router.push(`/${encodeURIComponent(name)}/${today}`)
   } catch (e) {
     console.error('Failed to refresh after product creation:', e)
   }
@@ -172,9 +215,9 @@ onMounted(async () => {
       await loadDates(product)
     }
 
-    // Expand all products that have dates
+    // Expand products that have server-side dates or any product when we will show synthetic today
     for (const product of products.value) {
-      if (datesByProduct[product]?.length > 0) {
+      if ((datesByProduct[product] || []).length > 0) {
         expandedProducts.add(product)
       }
     }
@@ -199,6 +242,11 @@ onMounted(async () => {
             break
           }
         }
+      }
+      // New campaigns: no daily/* yet — still open today's overview so RunPanel works
+      if (!target && products.value.length > 0) {
+        target = { product: products.value[0], date: todayIsoLocal() }
+        expandedProducts.add(products.value[0])
       }
       if (target) {
         router.push(`/${encodeURIComponent(target.product)}/${target.date}`)

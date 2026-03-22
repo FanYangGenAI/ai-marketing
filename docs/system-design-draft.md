@@ -1220,7 +1220,6 @@ ai-marketing/
     ├── routers/
     │   ├── campaigns.py         ← 所有 /api/campaigns/* 路由
     │   └── images.py            ← 图片文件服务
-    └── requirements.txt
 ```
 
 ### 11.4 FastAPI 接口设计
@@ -1516,10 +1515,11 @@ Pipeline 状态
 
 ### 11.8 开发说明
 
-**本地启动方式（开发期）：**
+**本地启动方式（开发期）：** 先在仓库根目录执行 `pip install -r requirements.txt`（Python 依赖仅此一份，含 FastAPI / uvicorn）。
+
 ```bash
 # 启动 FastAPI（端口 8000）
-cd server && uvicorn main:app --reload
+cd server && python -m uvicorn main:app --reload
 
 # 启动 Vite 前端（端口 5173，/api 代理到 8000）
 cd frontend && npm run dev

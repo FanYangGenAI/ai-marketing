@@ -4,7 +4,7 @@
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
     @click.self="$emit('close')"
   >
-    <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 overflow-hidden">
+    <div class="bg-white text-gray-900 rounded-2xl shadow-xl w-full max-w-lg mx-4 overflow-hidden">
       <!-- Header -->
       <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
         <h2 class="text-lg font-bold text-gray-900">新建产品项目</h2>
@@ -23,7 +23,7 @@
             v-model="name"
             type="text"
             placeholder="例如：原语、MyApp、TravelBot"
-            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
             :disabled="submitting"
           />
         </div>
@@ -38,10 +38,47 @@
             v-model="userBrief"
             rows="4"
             placeholder="描述你的产品：目标用户、核心功能、品牌调性、营销目标等..."
-            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             :disabled="submitting"
           />
           <p class="text-xs text-gray-400 mt-1">可选，但填写后 AI 的策略和文案质量会更贴合产品实际</p>
+        </div>
+
+        <!-- PRD upload (optional) -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">产品 PRD（可选）</label>
+          <p class="text-xs text-gray-500 mb-2">创建后将写入配置中的 prd_path，流水线可自动加载。支持 .md / .txt / .pdf / .doc / .docx。</p>
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="inline-flex items-center px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-800 cursor-pointer">
+              选择文件
+              <input
+                type="file"
+                class="hidden"
+                accept=".md,.txt,.pdf,.doc,.docx"
+                :disabled="submitting"
+                @change="onPrdChange"
+              />
+            </label>
+            <span v-if="prdLabel" class="text-sm text-gray-600 truncate max-w-[220px]">{{ prdLabel }}</span>
+            <span v-else class="text-sm text-gray-400">未选择</span>
+          </div>
+        </div>
+
+        <!-- Reference files (optional) -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">参考文档（可选，可多选）</label>
+          <p class="text-xs text-gray-500 mb-2">保存到 docs/materials/，供查阅；创建完成后也可在「产品设置」中补传。</p>
+          <label class="inline-flex items-center px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-800 cursor-pointer">
+            选择文件
+            <input
+              type="file"
+              class="hidden"
+              multiple
+              :disabled="submitting"
+              @change="onAttachmentsChange"
+            />
+          </label>
+          <span v-if="attachmentCount" class="text-sm text-gray-600 ml-2">已选 {{ attachmentCount }} 个文件</span>
         </div>
 
         <!-- 错误提示 -->
@@ -71,8 +108,12 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { createProduct } from '../api/index.js'
+import { computed, ref } from 'vue'
+import {
+  createProduct,
+  uploadProductAttachments,
+  uploadProductPrd,
+} from '../api/index.js'
 
 const emit = defineEmits(['close', 'created'])
 
@@ -81,18 +122,57 @@ const userBrief = ref('')
 const submitting = ref(false)
 const error = ref(null)
 
+const prdFile = ref(null)
+const prdLabel = ref('')
+const attachmentList = ref([])
+
+const attachmentCount = computed(() => attachmentList.value.length)
+
+function onPrdChange(e) {
+  const f = e.target.files?.[0]
+  prdFile.value = f || null
+  prdLabel.value = f ? f.name : ''
+  e.target.value = ''
+}
+
+function onAttachmentsChange(e) {
+  attachmentList.value = e.target.files ? Array.from(e.target.files) : []
+  e.target.value = ''
+}
+
 async function submit() {
   if (!name.value.trim()) return
   submitting.value = true
   error.value = null
+  const productName = name.value.trim()
   try {
-    await createProduct(name.value.trim(), userBrief.value.trim())
-    emit('created', name.value.trim())
-    emit('close')
+    await createProduct(productName, userBrief.value.trim())
   } catch (e) {
     error.value = e.message || '创建失败，请重试'
-  } finally {
     submitting.value = false
+    return
   }
+
+  emit('created', productName)
+
+  try {
+    if (prdFile.value) {
+      await uploadProductPrd(productName, prdFile.value)
+    }
+    if (attachmentList.value.length) {
+      await uploadProductAttachments(productName, attachmentList.value)
+    }
+  } catch (e) {
+    error.value =
+      `产品已创建，但文件上传失败：${e.message || '未知错误'}。请在侧栏进入「产品设置」重新上传。`
+    submitting.value = false
+    return
+  }
+
+  prdFile.value = null
+  prdLabel.value = ''
+  attachmentList.value = []
+  submitting.value = false
+  emit('close')
 }
 </script>

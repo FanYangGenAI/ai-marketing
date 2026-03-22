@@ -13,7 +13,7 @@
 
 ### #1 基础只读路由 `server/main.py` + `server/routers/campaigns.py`
 
-- [ ] `server/` 目录结构 + `requirements.txt`（fastapi、uvicorn、python-multipart）
+- [ ] `server/` 目录结构；Python 依赖统一在仓库根目录 `requirements.txt`（含 fastapi、uvicorn、python-multipart）
 - [ ] `server/main.py`：FastAPI 入口，CORS 配置（允许 localhost:5173），生产模式 serve `frontend/dist/`
 - [ ] `server/routers/campaigns.py`，实现只读路由：
 
@@ -182,10 +182,11 @@
 ## 本地启动
 
 ```bash
-# 后端（端口 8000）
-cd server
+# 仓库根目录：安装 Python 依赖（仅此一个 requirements.txt）
 pip install -r requirements.txt
-uvicorn main:app --reload
+
+# 后端（端口 8000）
+python -m uvicorn server.main:app --reload --host 127.0.0.1 --port 8000
 
 # 前端（端口 5173）
 cd frontend

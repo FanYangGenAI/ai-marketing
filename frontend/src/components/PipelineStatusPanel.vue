@@ -47,7 +47,7 @@ const props = defineProps({
   product: { type: String, default: '' },
 })
 
-const emit = defineEmits(['completed'])
+const emit = defineEmits(['completed', 'updated'])
 
 const statusData = ref(null)
 const collapsed = ref(false)
@@ -96,14 +96,31 @@ const stages = computed(() => {
 async function poll() {
   if (!props.product) return
   try {
+    const wasRunning = running.value
     statusData.value = await getRunStatus(props.product)
-    if (!running.value && statusData.value) {
-      // 完成后停止轮询，通知父组件
+    const nowRunning = statusData.value?.running === true
+
+    // Keep main Overview in sync while subprocess is alive (or just finished this tick)
+    if (nowRunning || wasRunning) {
+      emit('updated', {
+        running: nowRunning,
+        latestDate: statusData.value?.latest_date ?? null,
+      })
+    }
+
+    if (nowRunning) {
+      return
+    }
+
+    if (wasRunning) {
       stopPolling()
       emit('completed')
-      // 5 秒后自动折叠
       setTimeout(() => { collapsed.value = true }, 5000)
+      return
     }
+
+    // Idle: no run in progress this session
+    stopPolling()
   } catch {
     // ignore
   }

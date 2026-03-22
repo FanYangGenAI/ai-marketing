@@ -76,6 +76,49 @@ export async function createProduct(name, userBrief = '') {
   return apiPost('/api/products', { name, user_brief: userBrief })
 }
 
+export async function listProductDocuments(product) {
+  return apiFetch(`/api/products/${encodeURIComponent(product)}/documents`)
+}
+
+/**
+ * Upload PRD file; backend writes to docs/ and sets product_config.json prd_path.
+ * @param {File} file
+ */
+export async function uploadProductPrd(product, file) {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(
+    `/api/products/${encodeURIComponent(product)}/documents/prd`,
+    { method: 'POST', body: form }
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Upload PRD → ${res.status}: ${text}`)
+  }
+  return res.json()
+}
+
+/**
+ * Upload reference files to docs/materials/.
+ * @param {File[]} files
+ */
+export async function uploadProductAttachments(product, files) {
+  if (!files.length) return { status: 'ok', paths: [] }
+  const form = new FormData()
+  for (const f of files) {
+    form.append('files', f)
+  }
+  const res = await fetch(
+    `/api/products/${encodeURIComponent(product)}/documents/attachments`,
+    { method: 'POST', body: form }
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Upload attachments → ${res.status}: ${text}`)
+  }
+  return res.json()
+}
+
 export async function updateConfig(product, updates) {
   return apiPost(`/api/products/${encodeURIComponent(product)}/config`, updates)
 }

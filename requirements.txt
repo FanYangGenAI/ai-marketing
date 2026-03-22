@@ -1,24 +1,29 @@
-# ── LLM Clients ──────────────────────────────────────────────────────────────
+# LLM clients
 anthropic>=0.80.0
-openai>=1.52.0       # 1.52+ 兼容 httpx>=0.27（移除 proxies 参数）
-google-genai>=0.8.0          # 新 SDK，替代已弃用的 google-generativeai（2025-11-30 停止维护）
+openai>=1.52.0       # 1.52+ for httpx>=0.27 (proxies param removed)
+google-genai>=0.8.0  # replaces deprecated google-generativeai (EOL 2025-11-30)
 
-# ── Browser Automation (Gemini Web Skill / Screenshot Skill) ─────────────────
+# Browser automation (Gemini Web / screenshot skills)
 playwright>=1.48.0
 
-# ── Image Processing (crop_resize / text_overlay / watermark Skills) ─────────
+# Image processing (crop_resize, text_overlay, watermark skills)
 Pillow>=11.0.0
-# opencv-python-headless>=4.10.0  # 可选，watermark Skill mosaic 模式增强版
+# opencv-python-headless>=4.10.0  # optional: stronger mosaic for watermark skill
 
-# ── Video Processing (video_clip Skill) ──────────────────────────────────────
+# Video processing (video_clip skill)
 moviepy>=1.0.3
 
-# ── Utilities ─────────────────────────────────────────────────────────────────
+# Utilities
 python-dotenv>=1.0.0
 aiohttp>=3.10.0
 aiofiles>=24.1.0
 
-# ── Testing ───────────────────────────────────────────────────────────────────
+# HTTP API (FastAPI app under server/)
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+
+# Testing
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
 pytest-mock>=3.14.0

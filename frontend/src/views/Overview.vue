@@ -1,5 +1,18 @@
 <template>
   <div class="min-h-screen bg-gray-50">
+    <!-- No product/date in route (e.g. only / or invalid path) -->
+    <div
+      v-if="!product || !date"
+      class="max-w-lg mx-auto px-6 py-20 text-center text-gray-600"
+    >
+      <p class="text-lg font-semibold text-gray-900 mb-2">请选择产品与日期</p>
+      <p class="text-sm leading-relaxed">
+        在左侧展开产品，点击下方以日期为名称的入口进入总览。
+        若尚未跑过流水线，列表中会显示「今日 · 未跑流水线」。
+      </p>
+    </div>
+
+    <template v-else>
     <!-- Tab bar -->
     <div class="bg-white border-b border-gray-200 sticky top-0 z-10">
       <TabBar :product="product" :date="date" />
@@ -130,8 +143,10 @@
     <PipelineStatusPanel
       ref="statusPanel"
       :product="product"
+      @updated="onPipelineStatusUpdated"
       @completed="onPipelineCompleted"
     />
+    </template>
   </div>
 </template>
 
@@ -165,10 +180,11 @@ const STAGE_LABELS = {
   audit: '审核'
 }
 
+const STAGE_ORDER = ['strategist', 'planner', 'scriptwriter', 'director', 'creator', 'audit']
+
 const stages = computed(() => {
-  if (!state.value) return []
-  return ['strategist', 'planner', 'scriptwriter', 'director', 'creator', 'audit'].map(key => {
-    const s = state.value[key] || {}
+  return STAGE_ORDER.map((key) => {
+    const s = state.value?.[key] || {}
     let icon = '⏳'
     if (s.done) {
       icon = s.success ? '✅' : '❌'
@@ -189,13 +205,19 @@ const auditPassed = computed(() => {
 
 const pipelineComplete = computed(() => auditPassed.value !== null)
 
-async function load() {
+/**
+ * @param {{ silent?: boolean }} opts - silent: refresh without full-page loading state (polling)
+ */
+async function load(opts = {}) {
+  const silent = Boolean(opts.silent)
   if (!product.value || !date.value) {
     loading.value = false
     return
   }
-  loading.value = true
-  loadError.value = null
+  if (!silent) {
+    loading.value = true
+    loadError.value = null
+  }
   try {
     const [stateData, pkgData] = await Promise.allSettled([
       getState(product.value, date.value),
@@ -213,9 +235,9 @@ async function load() {
       existingFeedback.value = null
     }
   } catch (e) {
-    loadError.value = e.message
+    if (!silent) loadError.value = e.message
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -224,9 +246,21 @@ function onPipelineStarted() {
   statusPanel.value?.startPolling()
 }
 
+function onPipelineStatusUpdated(payload) {
+  if (!product.value || !date.value) return
+  // While subprocess is running, always sync (main.py writes today's folder; URL usually matches)
+  if (payload?.running) {
+    load({ silent: true })
+    return
+  }
+  const ld = payload?.latestDate
+  if (!ld || ld === date.value) {
+    load({ silent: true })
+  }
+}
+
 async function onPipelineCompleted() {
   pipelineRunning.value = false
-  // Reload data to show updated state
   await load()
 }
 
