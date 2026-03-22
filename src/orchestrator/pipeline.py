@@ -79,6 +79,7 @@ class Pipeline:
         prd_path: Path | None = None,
         user_note: str = "",
         from_step: str | None = None,
+        to_step: str | None = None,
         dry_run: bool = False,
     ) -> dict[str, AgentOutput]:
         """
@@ -109,23 +110,27 @@ class Pipeline:
             user_note=user_note,
         )
 
-        # 确定起始阶段
+        # 确定起始/结束阶段
         start_idx = 0
         if from_step and from_step in STEPS:
             start_idx = STEPS.index(from_step)
             log.info(f"从阶段 '{from_step}' 开始（跳过前 {start_idx} 个阶段）")
+        end_idx = len(STEPS)
+        if to_step and to_step in STEPS:
+            end_idx = STEPS.index(to_step) + 1
+            log.info(f"到阶段 '{to_step}' 为止（共执行 {end_idx - start_idx} 个阶段）")
 
         # 加载已有状态
         state = self._load_state(daily_folder)
 
         if dry_run:
-            self._print_dry_run(context, STEPS[start_idx:])
+            self._print_dry_run(context, STEPS[start_idx:end_idx])
             return {}
 
         results: dict[str, AgentOutput] = {}
 
         # 按顺序执行
-        steps_to_run = STEPS[start_idx:]
+        steps_to_run = STEPS[start_idx:end_idx]
         for step in steps_to_run:
             log.info(f"▶ 开始阶段：{step}")
             try:

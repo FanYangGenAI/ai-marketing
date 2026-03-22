@@ -220,7 +220,7 @@ class DirectorAgent(BaseAgent):
                     "--input", str(current_path),
                     "--output", str(overlay_path),
                     "--text", ov.get("text", ""),
-                    "--position", ov.get("position", "top"),
+                    "--position", ov.get("position") or "top",
                 )
                 current_path = overlay_path
 

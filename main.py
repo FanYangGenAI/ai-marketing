@@ -69,6 +69,10 @@ def parse_args() -> argparse.Namespace:
         help=f"从指定阶段开始，跳过前置阶段。可选：{STEPS}"
     )
     parser.add_argument(
+        "--to-step", default=None, choices=STEPS,
+        help=f"到指定阶段为止（含），跳过后续阶段。可选：{STEPS}"
+    )
+    parser.add_argument(
         "--platform", default="xiaohongshu",
         help="目标发布平台，默认 xiaohongshu"
     )
@@ -140,6 +144,7 @@ async def main() -> None:
             prd_path=prd_path,
             user_note=args.note,
             from_step=args.from_step,
+            to_step=args.to_step,
             dry_run=args.dry_run,
         )
     except Exception as e:
