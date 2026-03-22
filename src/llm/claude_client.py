@@ -44,6 +44,7 @@ class ClaudeClient(BaseLLMClient):
             max_tokens=max_tokens,
             messages=api_messages,
             thinking={"type": "adaptive"},
+            temperature=1,  # adaptive thinking requires temperature=1
         )
         if system:
             kwargs["system"] = system
