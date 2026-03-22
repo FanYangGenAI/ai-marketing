@@ -77,77 +77,60 @@
 
 ---
 
-## 阶段六·五：模型配置统一（新增）
+## 阶段六·五：模型配置统一（已完成）
 
-- [ ] **#8a** `src/config/llm_config.json`
+- [x] **#8a** `src/config/llm_config.json`
   - 创建统一的 LLM 模型配置文件（所有 Agent 驱动模型在此声明）
   - 默认 GPT 模型：`gpt-5-nano`；Gemini：`gemini-2.5-flash`；Claude：`claude-opus-4-6`
   - 各 Agent 构造时从配置中读取模型名（不硬编码）
 
 ---
 
-## 阶段七：Audit v2（共享清单 + Gemini StructuredOutput + 投票）
+## 阶段七：Audit v2（已完成）
 
-- [ ] **#9a** `src/config/audit_checklist.json`
-  - 创建共享审计清单文件（12 个初始条目，含 `id`、`category`、`route_on_fail`、`description`）
-  - 可扩展、可编辑，Platform / Content / Safety 三类
+- [x] **#9a** `src/config/audit_checklist.json`
+  - 共享审计清单，12 个条目，Platform / Content / Safety 三类
 
-- [ ] **#9b** `src/llm/gemini_client.py` — 新增 `chat_structured()` 方法
-  - 接受 `response_schema: dict` 参数
-  - 调用 Gemini API 的 `response_mime_type="application/json"` + `response_schema`
-  - 返回已解析的 Python 对象（不再是字符串），彻底消除 JSON 解析错误
-  - 模型从 `llm_config.json` 读取（默认 `gemini-2.5-flash`，支持切换至 `gemini-3.1-flash` 等）
+- [x] **#9b** `src/llm/gemini_client.py` — `chat_structured()` 方法
+  - 调用 Gemini StructuredOutput，返回已解析 Python 对象
+  - max_tokens=8192 防止中文 12 条目输出截断（已 bugfix）
 
-- [ ] **#9c** `src/agents/audit/audit.py` — 全面重写
-  - 读取 `audit_checklist.json` 动态加载清单
-  - 3 个 Gemini 实例并行，每实例用 `chat_structured()` 对全部清单条目给出 `{id, passed, reason}`
-  - 按条目汇总：2/3 多数投票决定每条目结论
-  - 写入 `audit/audit_result.json`（含每条目三票明细 + 整体 passed）
-  - 通过 → 拷贝 `creator/` 到 `output/final/`
+- [x] **#9c** `src/agents/audit/audit.py` — Audit v2
+  - 3× Gemini 并行 + per-item 2/3 多数投票
+  - 通过时自动拷贝 `creator/` 文件及图片到 `output/final/`
 
 ---
 
-## 阶段七·五：ReviserAgent + LessonMemory（新增）
+## 阶段七·五：ReviserAgent + LessonMemory（已完成）
 
-- [ ] **#9d** `src/agents/reviser/reviser.py`
-  - 读取 `audit/audit_result.json`，收集所有 `passed=false` 的条目
-  - 按各条目的 `route_on_fail` 字段，取最上游阶段作为 `route_to`
-  - 生成 `revision_instructions`（对下游 Agent 的修改要求文本）
-  - **写入 LessonMemory**：将每个失败条目（含违规内容片段）写入 `campaigns/{product}/memory/lessons_{platform}.json`
-  - 检查 `retry_count`（读取当日 pipeline state）：
-    - `< MAX_RETRIES`（默认 2）→ 写入 `audit/revision_plan.json`
-    - `≥ MAX_RETRIES` → 写入 `audit/human_review_required.json`，停止自动重跑
+- [x] **#9d** `src/agents/reviser/reviser.py`
+  - 读取失败条目 → 确定最上游路由阶段 → LLM 生成修订指令
+  - 写入 LessonMemory；超限写 human_review_required.json
 
-- [ ] **#9e** `src/orchestrator/lesson_memory.py` — LessonMemory 模块
-  - `LessonMemory.load(platform)` → 读取当前平台所有 lessons
-  - `LessonMemory.inject_prompt(agent, platform)` → 生成注入段落（Markdown）
-  - `LessonMemory.write_lesson(platform, lesson)` → 追加/更新单条 lesson（去重）
-  - Planner / Scriptwriter / Creator 启动时调用 `inject_prompt()` 注入历史经验
-  - 返回 `route_to` 供 Pipeline 决定续跑起点
+- [x] **#9e** `src/orchestrator/lesson_memory.py`
+  - `load()` / `inject_prompt()` / `write_lessons()`
+  - 按 platform 隔离，失败条目去重累计
 
-- [ ] **#10a** `src/orchestrator/pipeline.py` — 新增 Audit 失败回路
-  - Audit 失败后调用 ReviserAgent
-  - 若 `revision_plan.json` 存在 → 从 `route_to` 阶段重跑（携带 `revision_instructions`）
-  - 若 `human_review_required.json` 存在 → 终止，输出提示
-  - 各阶段 Agent 接受可选的 `revision_instructions` 注入（追加到 user prompt）
+- [x] **#10a** `src/orchestrator/pipeline.py` — Audit 失败回路
+  - Audit 失败 → ReviserAgent → 从 route_to 续跑
+  - `from_step` 指定时自动重置 retry_count（bugfix）
 
 ---
 
-## 阶段八：Orchestrator 主流程（已完成基础，待补充回路）
+## 阶段八：Orchestrator 主流程（已完成）
 
-- [x] **#10** `src/orchestrator/pipeline.py` — 基础版本已完成
+- [x] **#10** `src/orchestrator/pipeline.py` — 基础版本
   - 串联：Planner → Scriptwriter → Director → Creator → Audit
   - 支持断点续跑（`.pipeline_state.json`）
   - 支持 `--from-step` / `--to-step` 精确控制范围
-- [ ] **#10a** 见上：补充 Audit 失败回路 + ReviserAgent 集成
 
-- [x] **#11** `main.py`（CLI 入口）— 已完成
+- [x] **#11** `main.py`（CLI 入口）
   - `python main.py --product "MyApp" --prd docs/prd.md`
   - 支持 `--from-step` / `--to-step` / `--dry-run`
 
 ---
 
-## 阶段九：测试
+## 阶段九：测试（待启动）
 
 - [ ] **#12** `tests/agents/` — 各 Agent 单元测试（mock LLM 调用，验证文件输出）
 - [ ] **#13** `tests/orchestrator/test_pipeline.py` — Pipeline 集成测试（端到端冒烟）
@@ -155,22 +138,77 @@
 
 ---
 
+## 阶段十：展示层 Frontend + FastAPI（新增）
+
+> 目标：提供本地 Web 界面，让用户浏览、审阅所有 Pipeline 输出数据，下载投放物料。当前阶段只读。
+> 技术栈：FastAPI（Python）+ Vite + Vue 3 + Tailwind CSS
+> 详细设计见：`docs/system-design-draft.md` § 11
+
+### 后端（FastAPI）
+
+- [ ] **#15a** `server/main.py` + `server/routers/campaigns.py`
+  - FastAPI 应用入口，CORS 配置，静态文件服务（生产模式 serve `frontend/dist/`）
+  - 实现全部只读路由：
+    - `GET /api/products` → 扫描 `campaigns/` 返回产品列表
+    - `GET /api/products/{product}/dates` → 返回日期列表 + 每日状态摘要
+    - `GET /api/products/{product}/{date}/state` → pipeline state
+    - `GET /api/products/{product}/{date}/package` → post_package.json
+    - `GET /api/products/{product}/{date}/audit` → audit_result.json
+    - `GET /api/products/{product}/{date}/file?path=` → 任意文本文件（路径限 campaigns/）
+    - `GET /api/products/{product}/assets` → asset_library/index.json
+    - `GET /api/products/{product}/memory/{platform}` → lessons_{platform}.json
+
+- [ ] **#15b** `server/routers/images.py`
+  - `GET /api/images?path=` → 读取图片二进制，路径限 `campaigns/` 目录内
+
+### 前端（Vue 3 + Vite）
+
+- [ ] **#15c** 项目脚手架 + Sidebar 导航
+  - `frontend/` 目录初始化（`npm create vite`，Vue 3 + Tailwind）
+  - `vite.config.js`：`/api` 代理到 `http://localhost:8000`
+  - `Sidebar.vue`：产品/日期导航树，点击切换主视图
+  - `App.vue`：路由切换（vue-router 或手动状态）
+
+- [ ] **#15d** Overview + PostDetail 视图
+  - `Overview.vue`：Pipeline 阶段状态列表 + 帖子摘要卡片
+  - `PostDetail.vue`：小红书风格帖子预览卡片（CSS 模拟）
+    - `ImageCarousel.vue`：图片轮播，支持点击大图预览（lightbox）
+    - 每张图片：[下载] 按钮 → `<a download>` 触发浏览器下载
+    - [复制标题] / [复制正文] / [复制话题标签] → `navigator.clipboard.writeText()`
+
+- [ ] **#15e** AuditReport + PipelineLog 视图
+  - `AuditReport.vue`：12 条目表格，含 3 票明细展开、重试历史
+  - `PipelineLog.vue`：阶段折叠列表，右侧 Markdown / JSON 预览面板
+    - Markdown：marked.js 渲染
+    - JSON：语法高亮（highlight.js 或 prism.js）
+
+- [ ] **#15f** AssetLibrary + LessonMemory 视图
+  - `AssetLibrary.vue`：图片网格，支持 type/date 筛选，点击查看 prompt + 下载
+  - `LessonMemory.vue`：经验记忆表格，展开显示规则全文和反例
+
+---
+
 ## 执行顺序（更新）
 
 ```
-#8a (llm_config.json)
+（已完成）
+#8a → #9a → #9b → #9c → #9e → #9d → #10a → #10 → #11
+
+（下一阶段：展示层）
+#15a (FastAPI 后端 + 基础路由)
     ↓
-#9a (audit_checklist.json)
+#15b (图片服务)
     ↓
-#9b (GeminiClient.chat_structured)
+#15c (Vue 项目脚手架 + Sidebar)
     ↓
-#9c (AuditAgent v2)
+#15d (Overview + PostDetail，含图片下载/复制文案)
     ↓
-#9e (LessonMemory 模块) → #9d (ReviserAgent，含 LessonMemory 写入)
+#15e (AuditReport + PipelineLog)
     ↓
-#10a (Pipeline 回路，含 LessonMemory 注入到各 Agent)
-    ↓
-#12 → #13 → #14
+#15f (AssetLibrary + LessonMemory)
+
+（后续）
+#12 → #13 → #14 （单元测试 + 集成测试）
 ```
 
 ---
@@ -187,16 +225,22 @@
 | 6 | Scriptwriter | ✅ 完成并验收 |
 | 7 | Director | ✅ 完成并验收 |
 | 8 | Creator | ✅ 完成并验收 |
-| 8a | llm_config.json（模型统一配置） | ⬜ 待开始 |
-| 9 | Audit v1（旧版） | ✅ 已跑通，待重设计 |
-| 9a | audit_checklist.json | ⬜ 待开始 |
-| 9b | GeminiClient.chat_structured | ⬜ 待开始 |
-| 9c | AuditAgent v2（共享清单+投票） | ⬜ 待开始 |
-| 9d | ReviserAgent（含 LessonMemory 写入） | ⬜ 待开始 |
-| 9e | LessonMemory 模块 | ⬜ 待开始 |
-| 10 | Pipeline 基础版 | ✅ 完成（含 --from-step/--to-step） |
-| 10a | Pipeline Audit 失败回路 + LessonMemory 注入 | ⬜ 待开始 |
+| 8a | llm_config.json（模型统一配置） | ✅ 完成 |
+| 9 | Audit v1（旧版） | ✅ 已替换为 v2 |
+| 9a | audit_checklist.json | ✅ 完成 |
+| 9b | GeminiClient.chat_structured | ✅ 完成（含 bugfix） |
+| 9c | AuditAgent v2（共享清单+投票） | ✅ 完成（含 bugfix） |
+| 9d | ReviserAgent（含 LessonMemory 写入） | ✅ 完成 |
+| 9e | LessonMemory 模块 | ✅ 完成 |
+| 10 | Pipeline 基础版 | ✅ 完成 |
+| 10a | Pipeline Audit 失败回路 + LessonMemory 注入 | ✅ 完成（含 bugfix） |
 | 11 | main.py CLI 入口 | ✅ 完成 |
 | 12 | Agent 单元测试 | ⬜ 待开始 |
 | 13 | Pipeline 集成测试 | ⬜ 待开始 |
-| 14 | 完整链路手动验证 | ⬜ 待开始 |
+| 14 | 完整链路手动验证 | ✅ 已完成（2026-03-22 原语首跑验收） |
+| 15a | FastAPI 后端 + 路由 | ⬜ 待开始 |
+| 15b | 图片文件服务 | ⬜ 待开始 |
+| 15c | Vue 脚手架 + Sidebar 导航 | ⬜ 待开始 |
+| 15d | Overview + PostDetail（下载/复制） | ⬜ 待开始 |
+| 15e | AuditReport + PipelineLog | ⬜ 待开始 |
+| 15f | AssetLibrary + LessonMemory | ⬜ 待开始 |

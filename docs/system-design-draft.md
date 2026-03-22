@@ -1,4 +1,4 @@
-# AI Marketing Multi-Agent System — Design Draft v1.1
+# AI Marketing Multi-Agent System — Design Draft v1.2
 
 > 状态：进行中
 > 更新日期：2026-03-22
@@ -13,6 +13,11 @@
 >   - 默认 GPT 模型由 `gpt-4o` 升级为 `gpt-5-nano`
 >   - 新增 LessonMemory 模块：Audit 失败经验写入长期记忆，后续创作自动注入，避免重复犯错
 >   - Campaign Memory 章节扩展为「记忆体系」，区分短期（选题去重）与长期（规则经验）
+> - v1.1 → v1.2：
+>   - 新增第 7 章：展示层（Frontend + FastAPI）
+>   - 技术选型：Vite + Vue 3 + Tailwind（前端）/ FastAPI（后端）
+>   - 设计六个核心视图：Overview、PostDetail、AuditReport、PipelineLog、AssetLibrary、LessonMemory
+>   - FastAPI 只读 REST API，自动生成 OpenAPI 文档
 
 ---
 
@@ -85,7 +90,14 @@
        ┌──────────────────────┐  ┌─────────────────────────────┐
        │   每日投放物料清单     │  │        ReviserAgent         │
        │  output/final/ 文件夹 │  │  分类问题 → 决定路由阶段      │
-       └──────────────────────┘  └──────────┬──────────────────┘
+       └──────────┬───────────┘  └──────────┬──────────────────┘
+                  │
+                  ▼
+       ┌──────────────────────┐
+       │   展示层（只读）       │
+       │  FastAPI + Vue 前端   │
+       │  浏览/审阅/下载物料    │
+       └──────────────────────┘
                                             │ route_to + revision_instructions
                                             │ (RetryGuard: 超限 → human_review_required.json)
                                             │
@@ -1059,6 +1071,8 @@ async def debate_and_synthesize(agents: list, moderator, context: dict) -> str:
 | 数据持久化 | JSON 文件（跟随 campaigns/ 目录） | 轻量，无需数据库 |
 | 并发 | Python `asyncio` | 多 agent 并行调用 |
 | 环境隔离 | Python venv（当前）→ Docker（后期） | 沙箱逐步升级 |
+| **展示层 - 后端** | **FastAPI** | 只读 REST API；Python 同栈，自动 OpenAPI 文档 |
+| **展示层 - 前端** | **Vite + Vue 3 + Tailwind CSS** | 轻量 SPA；Composition API；快速开发 |
 
 ---
 
@@ -1096,3 +1110,264 @@ async def debate_and_synthesize(agents: list, moderator, context: dict) -> str:
 | 3 | Audit 失败时的自动修复循环最大重试次数 | 默认 2 次，超过则标记人工处理 | 中 |
 | 4 | 小红书平台规范更新的维护策略 | 手动更新 `xiaohongshu.json` | 低 |
 | 5 | 后续自动接入平台 API 获取投放反馈 | 暂时人工上传 CSV | 低（二期） |
+
+---
+
+## 11. 展示层（Frontend + FastAPI）
+
+### 11.1 设计目标
+
+提供一个本地 Web 界面，让用户可以浏览、审阅所有 Pipeline 输出数据，以及下载最终投放物料。**当前阶段只读**，不触发任何 Pipeline 操作。
+
+### 11.2 技术选型
+
+| 组件 | 选型 | 理由 |
+|------|------|------|
+| API 后端 | FastAPI (Python) | 与 Pipeline 同语言，直接读 `campaigns/` 目录；自动生成 OpenAPI 文档 |
+| 前端框架 | Vite + Vue 3 (Composition API) | 响应式数据驱动；与 Vite 原生配合；轻量 |
+| UI 样式 | Tailwind CSS | 快速布局；无额外依赖 |
+| Markdown 渲染 | marked.js | 渲染 `.md` 文件 |
+
+### 11.3 目录结构
+
+```
+ai-marketing/
+├── frontend/                    ← Vue 3 + Vite 前端
+│   ├── src/
+│   │   ├── views/
+│   │   │   ├── Overview.vue     ← 今日总览（默认）
+│   │   │   ├── PostDetail.vue   ← 帖子详情 + XHS 预览
+│   │   │   ├── AuditReport.vue  ← 审核清单 per-item 明细
+│   │   │   ├── PipelineLog.vue  ← 各阶段原始输出（折叠）
+│   │   │   ├── AssetLibrary.vue ← 素材库图片浏览
+│   │   │   └── LessonMemory.vue ← 历史经验记忆
+│   │   ├── components/
+│   │   │   ├── Sidebar.vue      ← 产品/日期导航树
+│   │   │   ├── XhsPreview.vue   ← 小红书帖子仿真卡片
+│   │   │   ├── ImageCarousel.vue← 图片轮播
+│   │   │   └── AuditBadge.vue   ← 审核状态徽章
+│   │   └── api/
+│   │       └── index.js         ← API 调用封装（fetch）
+│   ├── index.html
+│   ├── vite.config.js           ← proxy /api → FastAPI
+│   └── package.json
+│
+└── server/                      ← FastAPI 后端
+    ├── main.py                  ← FastAPI 入口 + CORS
+    ├── routers/
+    │   ├── campaigns.py         ← 所有 /api/campaigns/* 路由
+    │   └── images.py            ← 图片文件服务
+    └── requirements.txt
+```
+
+### 11.4 FastAPI 接口设计
+
+所有接口只读，无写操作。基准路径 `/api`。
+
+```
+GET  /api/products
+     → 扫描 campaigns/ 目录，返回所有产品名（按字母排序）
+     → ["原语", "Yuanyu", ...]
+
+GET  /api/products/{product}/dates
+     → 返回该产品所有已运行日期（降序），含每日 pipeline 状态摘要
+     → [{"date": "2026-03-22", "passed": true, "stages_done": 5}, ...]
+
+GET  /api/products/{product}/{date}/state
+     → 读取 .pipeline_state.json
+     → 返回各阶段 done/success/summary
+
+GET  /api/products/{product}/{date}/package
+     → 读取 creator/post_package.json
+     → 返回 title、body、hashtags、images 列表
+
+GET  /api/products/{product}/{date}/audit
+     → 读取 audit/audit_result.json
+     → 返回 passed、各条目 votes 明细
+
+GET  /api/products/{product}/{date}/file?path=plan/daily_marketing_plan.md
+     → 读取 daily_folder 下任意文本文件
+     → 返回 {content: "...", type: "markdown" | "json" | "text"}
+
+GET  /api/products/{product}/assets
+     → 读取 asset_library/index.json
+     → 支持 ?type=generate&date=2026-03-22 筛选
+
+GET  /api/products/{product}/memory/{platform}
+     → 读取 memory/lessons_{platform}.json
+
+GET  /api/images?path=campaigns/原语/daily/.../img_01.png
+     → 读取图片文件，返回二进制（Content-Type: image/png）
+     → 前端直接用作 <img src="/api/images?path=...">
+```
+
+**安全限制：** `file` 接口和 `images` 接口限制路径只能在 `campaigns/` 目录内，防止目录遍历。
+
+### 11.5 六个核心视图
+
+#### ① Overview（今日总览，默认视图）
+
+选中产品+日期后展示，快速掌握当日状态：
+
+```
+[ ✅ 审核通过 ]  原语 · 2026-03-22 · xiaohongshu
+
+Pipeline 状态
+  ✅ Planner      以「翻译翻车→救场」的反差叙事为核心...
+  ✅ Scriptwriter  AI把梅老板翻成煤老板，我3秒救回
+  ✅ Director     素材编排完成：8/8 张成功
+  ✅ Creator      发布包已组装，审核就绪
+  ✅ Audit        审核通过（第 2 次，1 次重试后通过）
+
+帖子摘要
+  [封面缩略图]  标题 + 正文前 80 字 + hashtags
+  [ 查看完整帖子 ]  [ 查看审核报告 ]  [ 流水线日志 ]
+```
+
+#### ② PostDetail（帖子详情 + 小红书仿真预览）
+
+核心视图。左侧：小红书风格帖子卡片（CSS 模拟，非像素级）；右侧：图片缩略图列表。
+
+```
+┌──────────────────────┐  ┌─────────────────────────────────┐
+│   [小红书帖子卡片]    │  │  图片列表（8张）                 │
+│                      │  │  img_01 封面·翻车名场面    [下载] │
+│   ←  [图片轮播]  →   │  │  img_02 翻车案例：老六     [下载] │
+│   ────────────────   │  │  img_03 翻车案例：绝绝子   [下载] │
+│   标题：AI把梅老板…  │  │  ...                             │
+│                      │  │                                  │
+│   正文（可展开）…    │  │  操作                            │
+│                      │  │  [复制标题]  [复制正文]           │
+│   #tag1 #tag2 #tag3  │  │  [复制话题标签]                  │
+└──────────────────────┘  └─────────────────────────────────┘
+```
+
+**可执行操作（只读）：**
+- 点击图片 → 原图预览（lightbox）
+- 每张图片旁 [下载] → 触发浏览器 `<a download>` 下载
+- [复制标题 / 正文 / 话题标签] → `navigator.clipboard.writeText()`
+
+**小红书卡片样式设计：**
+采用 CSS 模拟移动端卡片（圆角卡片 + 适当阴影），不引入手机外壳图片资源。重点呈现内容本身的阅读感受，与真实发布效果接近即可。
+
+#### ③ AuditReport（审核报告）
+
+```
+总体结论：✅ 通过  （第 1 次重试后通过，共审核 2 次）
+
+重试历史：[第1次 ❌ → Scriptwriter 修订] → [第2次 ✅]
+
+条目明细（12 项）：
+  条目             类别      3票结果      结论    代表理由
+  title_length     platform  3通/0失      ✅      标题15字符合要求
+  no_superlatives  platform  2通/1失      ✅      重试后无绝对化用语
+  fact_accuracy    content   3通/0失      ✅      功能描述与PRD一致
+  ...
+
+展开每条目 → 显示 Auditor A/B/C 三票的具体理由
+```
+
+#### ④ PipelineLog（流水线日志）
+
+按阶段折叠展示原始输出，方便 debug：
+
+```
+▼ Planner                              [2026-03-22 13:30]
+  ├ daily_marketing_plan.md            [查看 Markdown]
+  └ debate_raw.md（3轮辩论）           [查看 Markdown]
+
+▼ Scriptwriter                         [2026-03-22 13:45]
+  ├ daily_marketing_script.md          [查看 Markdown]
+  └ debate_raw.md（2轮辩论）           [查看 Markdown]
+
+▼ Director                             [2026-03-22 13:50]
+  └ director_task_result.json（8任务） [查看 JSON]
+
+▼ Creator                              [2026-03-22 14:05]
+  ├ post_content.md                    [查看 Markdown]
+  └ creator_raw.md                     [查看 Markdown]
+
+▼ Audit                                [2026-03-22 14:10]
+  └ audit_raw.md（3 Auditor 原始投票）[查看 Markdown]
+```
+
+文件内容在右侧面板（或 modal）中展示，Markdown 渲染，JSON 语法高亮。
+
+#### ⑤ AssetLibrary（素材库）
+
+```
+[筛选：全部 | generate | screenshot]  [排序：最新 | 使用次数]
+
+ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐
+ │      │ │      │ │      │ │      │
+ │ img  │ │ img  │ │ img  │ │ img  │
+ │      │ │      │ │      │ │      │
+ └──────┘ └──────┘ └──────┘ └──────┘
+ generate  generate  generate  generate
+ 2026-03-22  used×1  2026-03-22  used×0
+
+点击图片：展开 prompt、asset_id、使用日期       [下载]
+```
+
+#### ⑥ LessonMemory（经验记忆）
+
+```
+平台：xiaohongshu    共 12 条经验
+
+  条目              类别      违规次数  规则摘要
+  title_length      platform    1      标题不超过20字...
+  no_superlatives   platform    1      不使用绝对化用语...
+  fact_accuracy     content     1      功能描述与PRD一致...
+  ...
+
+展开每条 → 显示完整规则 + 反例内容
+```
+
+### 11.6 布局结构
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  AI Marketing Studio                              [今日 03-22]  │
+├──────────────┬──────────────────────────────────────────────────┤
+│  CAMPAIGNS   │                                                   │
+│              │          主内容区（视图切换）                     │
+│  原语        │                                                   │
+│  ├ 2026-03-22│  [Overview] [帖子预览] [审核报告] [日志] 标签栏   │
+│  └ 2026-03-21│                                                   │
+│              │                                                   │
+│  ──────────  │                                                   │
+│  素材库      │                                                   │
+│  经验记忆    │                                                   │
+└──────────────┴──────────────────────────────────────────────────┘
+```
+
+左侧固定宽度导航树 + 右侧主内容区。每个日期下有 4 个标签（Overview / 帖子预览 / 审核报告 / 日志）。素材库和经验记忆为产品级全局视图（不区分日期）。
+
+### 11.7 开发说明
+
+**本地启动方式（开发期）：**
+```bash
+# 启动 FastAPI（端口 8000）
+cd server && uvicorn main:app --reload
+
+# 启动 Vite 前端（端口 5173，/api 代理到 8000）
+cd frontend && npm run dev
+```
+
+**Vite proxy 配置（`frontend/vite.config.js`）：**
+```js
+export default {
+  server: {
+    proxy: {
+      '/api': 'http://localhost:8000'
+    }
+  }
+}
+```
+
+**生产部署：**
+```bash
+npm run build   # 生成 frontend/dist/
+# FastAPI 同时 serve dist/ 静态文件 + /api 路由
+# 单进程启动，无需 Nginx
+```
