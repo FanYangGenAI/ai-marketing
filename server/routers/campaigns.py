@@ -514,11 +514,11 @@ async def run_pipeline(product: str, req: RunPipelineRequest):
         cmd += ["--note", req.today_note]
 
     try:
+        # Inherit stdout/stderr so `main.py` + Pipeline logs show in the uvicorn terminal
+        # (DEVNULL previously discarded all subprocess output).
         proc = subprocess.Popen(
             cmd,
             cwd=str(repo_root),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
         )
         _running_processes[product] = proc
     except Exception as e:
@@ -628,8 +628,6 @@ async def trigger_cold_start_understand(product: str):
         proc = subprocess.Popen(
             cmd,
             cwd=str(repo_root),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
         )
         _understanding_processes[product] = proc
     except Exception as e:

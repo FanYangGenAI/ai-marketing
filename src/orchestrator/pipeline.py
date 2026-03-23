@@ -197,6 +197,18 @@ class Pipeline:
         history = self._load_run_history(daily_folder)
         attempt_seq = len(history.get("attempts", []))
 
+        log.info(
+            "[Pipeline] run start product=%s daily=%s start_idx=%s end_idx=%s "
+            "steps_to_run=%s _retry_count=%s attempt_seq=%s",
+            self.product_name,
+            daily_folder,
+            start_idx,
+            end_idx,
+            steps_to_run,
+            retry_count,
+            attempt_seq,
+        )
+
         while True:
             attempt_id = f"attempt_{attempt_seq:02d}"
             attempt_record = {
@@ -208,6 +220,13 @@ class Pipeline:
             history.setdefault("attempts", []).append(attempt_record)
             self._save_run_history(daily_folder, history)
             context.extra["attempt_id"] = attempt_id
+
+            log.info(
+                "[Pipeline] attempt begin attempt_id=%s retry_count=%s steps=%s",
+                attempt_id,
+                retry_count,
+                steps_to_run,
+            )
 
             for step in steps_to_run:
                 log.info(f"▶ 开始阶段：{step}")
@@ -250,12 +269,26 @@ class Pipeline:
             audit_output = results.get("audit")
             if audit_output is None or audit_output.success:
                 # 没有跑 audit 或者 audit 通过，正常结束
+                log.info(
+                    "[Pipeline] audit finished: pass or skipped (no failure loop). "
+                    "attempt_id=%s has_audit=%s audit_success=%s",
+                    attempt_id,
+                    audit_output is not None,
+                    audit_output.success if audit_output else None,
+                )
                 attempt_record["audit_passed"] = True
                 attempt_record["ended_at"] = self._iso_now()
                 self._save_run_history(daily_folder, history)
                 break
             attempt_record["audit_passed"] = False
             attempt_record["failed_items"] = list(audit_output.data.get("summary_failed", []))
+
+            log.warning(
+                "[Pipeline] audit not passed attempt_id=%s failed_items=%s summary=%s",
+                attempt_id,
+                attempt_record["failed_items"],
+                audit_output.summary,
+            )
 
             # ── Audit 未通过 → 运行 ReviserAgent ────────────────────────────
             log.warning("⚠️ 审核未通过，调用 ReviserAgent 分析问题...")
@@ -271,6 +304,15 @@ class Pipeline:
             reviser_output = await self._reviser.run(reviser_context)
             results["reviser"] = reviser_output
             log.info(f"📋 Reviser：{reviser_output.summary}")
+            log.info(
+                "[Pipeline] reviser done attempt_id=%s success=%s route_to=%s "
+                "requires_human_review=%s retry_count_in=%s",
+                attempt_id,
+                reviser_output.success,
+                reviser_output.data.get("route_to"),
+                bool(reviser_output.data.get("requires_human_review")),
+                retry_count,
+            )
             attempt_record["reviser"] = {
                 "success": reviser_output.success,
                 "summary": reviser_output.summary,
@@ -282,12 +324,23 @@ class Pipeline:
 
             # ── 检查是否需要人工介入 ─────────────────────────────────────────
             if reviser_output.data.get("requires_human_review"):
+                log.error(
+                    "[Pipeline] stopping: requires_human_review attempt_id=%s state._retry_count=%s",
+                    attempt_id,
+                    state.get("_retry_count"),
+                )
                 log.error("🛑 超出最大重试次数，需要人工介入。流程终止。")
                 attempt_record["ended_at"] = self._iso_now()
                 self._save_run_history(daily_folder, history)
                 break
 
             if not reviser_output.success or not reviser_output.data.get("route_to"):
+                log.warning(
+                    "[Pipeline] stopping: reviser invalid attempt_id=%s success=%s route_to=%s",
+                    attempt_id,
+                    reviser_output.success,
+                    reviser_output.data.get("route_to"),
+                )
                 log.warning("⚠️ ReviserAgent 未返回有效路由，流程终止。")
                 attempt_record["ended_at"] = self._iso_now()
                 self._save_run_history(daily_folder, history)
@@ -302,6 +355,15 @@ class Pipeline:
             self._save_state(daily_folder, state)
 
             log.info(f"🔄 第 {retry_count} 次重试，从阶段 '{route_to}' 开始...")
+            log.info(
+                "[Pipeline] retry scheduled attempt_id=%s -> next_attempt_seq=%s "
+                "new_retry_count=%s route_to=%s revision_chars=%s",
+                attempt_id,
+                attempt_seq + 1,
+                retry_count,
+                route_to,
+                len(revision_instructions or ""),
+            )
 
             # 将修订指令注入 user_note，让下游 Agent 感知
             revised_note = effective_user_note
@@ -327,10 +389,17 @@ class Pipeline:
             route_idx = STEPS.index(route_to)
             audit_idx = STEPS.index("audit") + 1
             steps_to_run = STEPS[route_idx:audit_idx]
+            log.info(
+                "[Pipeline] next loop will run steps=%s (slice [%s:%s])",
+                steps_to_run,
+                route_idx,
+                audit_idx,
+            )
             attempt_record["ended_at"] = self._iso_now()
             self._save_run_history(daily_folder, history)
             attempt_seq += 1
 
+        log.info("[Pipeline] run end product=%s daily=%s", self.product_name, daily_folder)
         return results
 
     async def _run_step(self, step: str, context: AgentContext) -> AgentOutput:
