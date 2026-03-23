@@ -205,8 +205,10 @@ async def get_package(product: str, date: str):
     # Normalize backslashes in image paths to forward slashes
     if "images" in data and isinstance(data["images"], list):
         for img in data["images"]:
-            if "path" in img:
-                img["path"] = img["path"].replace("\\", "/")
+            if isinstance(img, dict):
+                p = img.get("path")
+                if isinstance(p, str):
+                    img["path"] = p.replace("\\", "/")
 
     return data
 
@@ -260,8 +262,10 @@ async def get_assets(product: str):
     # Normalize backslashes in asset file paths
     if "assets" in data and isinstance(data["assets"], list):
         for asset in data["assets"]:
-            if "file" in asset:
-                asset["file"] = asset["file"].replace("\\", "/")
+            if isinstance(asset, dict):
+                f = asset.get("file")
+                if isinstance(f, str):
+                    asset["file"] = f.replace("\\", "/")
             if "note" not in asset:
                 asset["note"] = ""
             if "disabled" not in asset:

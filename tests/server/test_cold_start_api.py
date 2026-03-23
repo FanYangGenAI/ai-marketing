@@ -79,3 +79,26 @@ def test_cold_start_upload_and_patch_delete(client, campaigns_root):
 
     assets2 = client.get("/api/products/P1/assets").json()
     assert assets2["assets"][0]["disabled"] is True
+
+
+def test_get_package_normalizes_paths_and_allows_null_path(client, campaigns_root):
+    """post_package.json may list images with path=null; API must not 500."""
+    pdir = campaigns_root / "PX"
+    creator = pdir / "daily" / "2026-01-01" / "creator"
+    creator.mkdir(parents=True)
+    pkg = {
+        "platform": "xiaohongshu",
+        "title": "t",
+        "body": "b",
+        "images": [
+            {"order": 1, "path": r"a\b\c.png", "caption": ""},
+            {"order": 2, "path": None, "caption": "pending"},
+        ],
+    }
+    (creator / "post_package.json").write_text(json.dumps(pkg), encoding="utf-8")
+
+    r = client.get("/api/products/PX/2026-01-01/package")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["images"][0]["path"] == "a/b/c.png"
+    assert data["images"][1]["path"] is None
