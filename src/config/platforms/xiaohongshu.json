@@ -2,6 +2,17 @@
   "platform": "xiaohongshu",
   "display_name": "小红书",
   "content_type": "图文",
+  "rules_version": "1.0",
+  "updated_at": "2026-03-23",
+  "hard_rules": {
+    "title": { "required": true, "max_chars": 20 },
+    "body": { "required": true, "max_chars": 1000 }
+  },
+  "guidelines": {
+    "hashtags": { "min": 3, "max": 8, "strategy": "头部+长尾混合" },
+    "body_length_suggested": { "min": 500, "max": 1000 },
+    "tone": "口语化、真实感、生活化"
+  },
   "specs": {
     "image_count": { "min": 1, "max": 9, "recommended": "3-6" },
     "image_ratio": ["3:4", "1:1"],

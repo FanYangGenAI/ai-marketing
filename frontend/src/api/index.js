@@ -66,6 +66,11 @@ export async function getConfig(product) {
   return apiFetch(`/api/products/${encodeURIComponent(product)}/config`)
 }
 
+/** Read-only platform rules (hard_rules + guidelines) for UI */
+export async function getPlatformRules(platform) {
+  return apiFetch(`/api/platforms/${encodeURIComponent(platform)}/rules`)
+}
+
 export async function getRunStatus(product) {
   return apiFetch(`/api/products/${encodeURIComponent(product)}/run/status`)
 }

@@ -1,4 +1,4 @@
-﻿# TODO List — 平台通用硬约束（小红书）v1
+# TODO List — 平台通用硬约束（小红书）v1
 
 > 方案文档：`docs/platform-constraints-xiaohongshu-v1.md`  
 > 创建日期：2026-03-23  
@@ -105,3 +105,21 @@
 | 日期 | 说明 |
 |------|------|
 | 2026-03-23 | 初版实现清单，配套 `platform-constraints-xiaohongshu-v1.md` |
+| 2026-03-23 | 已实现 v1：配置 `hard_rules`、校验器、`GET /api/platforms/{platform}/rules`、产品设置只读展示、Planner/Creator 注入与 Creator 后处理、`copy_validation.json` |
+
+---
+
+## 实现记录（2026-03-23）
+
+已完成对应清单项：
+
+- `src/config/platforms/xiaohongshu.json`：`rules_version` / `updated_at` / `hard_rules` / `guidelines`
+- `src/orchestrator/platform_rules.py`、`src/orchestrator/content_validator.py`
+- `PlatformAdapter`：`hard_rules`、`build_hard_rules_prompt()`、`build_spec_prompt` 前置硬约束、标题/正文缺失校验
+- `PlannerAgent`：共享上下文注入硬约束
+- `CreatorAgent`：`enforce_platform_copy` + `creator/copy_validation.json`
+- `server/routers/platforms.py`：`GET /api/platforms/{platform}/rules`
+- 前端：`getPlatformRules` + 产品设置「平台要求（只读）」
+- 测试：`tests/orchestrator/test_content_validator.py`、`tests/server/test_platform_rules_api.py`，并扩展 `test_platform_adapter.py`
+
+未纳入本期：Audit 展示违规码、Reviser 按错误码定向回修（Creator 已做确定性截断/占位以满足硬约束）。

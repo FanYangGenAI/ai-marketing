@@ -19,6 +19,7 @@ from pathlib import Path
 
 from src.agents.base import AgentContext, AgentOutput, BaseAgent
 from src.llm.base import BaseLLMClient, LLMMessage
+from src.orchestrator.content_validator import enforce_platform_copy
 from src.orchestrator.platform_adapter import PlatformAdapter
 
 
@@ -112,6 +113,32 @@ class CreatorAgent(BaseAgent):
         body_text = self._extract_body_block(response.content)
         package = self._parse_json(response.content)
         package["body"] = body_text
+
+        hard = self._platform_adapter.hard_rules
+        new_title, new_body, viol_before, viol_after = enforce_platform_copy(
+            package.get("title"),
+            package.get("body"),
+            hard,
+        )
+        package["title"] = new_title
+        package["body"] = new_body
+        package["platform_hard_rules_applied"] = True
+        if viol_before:
+            package["copy_violations_before_enforce"] = [v.to_dict() for v in viol_before]
+
+        validation_path = creator_dir / "copy_validation.json"
+        validation_path.write_text(
+            json.dumps(
+                {
+                    "violations_before": [v.to_dict() for v in viol_before],
+                    "violations_after": [v.to_dict() for v in viol_after],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
         self._write_json(package_path, package)
 
         readable = self._package_to_markdown(package, date_str)

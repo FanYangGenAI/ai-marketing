@@ -39,6 +39,33 @@
           </p>
         </div>
 
+        <!-- Platform rules (read-only) -->
+        <div v-if="platformRules" class="bg-white rounded-xl shadow-sm border border-amber-100 p-5 ring-1 ring-amber-50">
+          <h3 class="font-semibold text-gray-800 mb-1">平台要求（只读）</h3>
+          <p class="text-xs text-gray-500 mb-3">
+            以下约束由<strong class="text-gray-800">发布平台</strong>决定，<strong class="text-amber-800">不可被用户偏好覆盖</strong>。
+          </p>
+          <p class="text-xs text-gray-600 mb-3">
+            {{ platformRules.display_name }}
+            <span v-if="platformRules.rules_version" class="font-mono"> · v{{ platformRules.rules_version }}</span>
+            <span v-if="platformRules.updated_at" class="font-mono"> · {{ platformRules.updated_at }}</span>
+          </p>
+          <ul class="text-sm text-gray-800 space-y-1.5 list-disc pl-5">
+            <li>
+              <span class="text-xs bg-red-50 text-red-800 px-1.5 py-0.5 rounded font-medium mr-1">硬约束</span>
+              标题：必填，最多 {{ platformRules.hard_rules?.title?.max_chars ?? '—' }} 个字符（len 计数）
+            </li>
+            <li>
+              <span class="text-xs bg-red-50 text-red-800 px-1.5 py-0.5 rounded font-medium mr-1">硬约束</span>
+              正文：必填，最多 {{ platformRules.hard_rules?.body?.max_chars ?? '—' }} 个字符（len 计数）
+            </li>
+          </ul>
+          <details class="mt-3 text-xs text-gray-600">
+            <summary class="cursor-pointer text-gray-800 font-medium">建议与规格（展开查看 JSON）</summary>
+            <pre class="mt-2 p-3 bg-gray-50 rounded-lg overflow-x-auto text-[11px] leading-relaxed">{{ platformRulesJson }}</pre>
+          </details>
+        </div>
+
         <!-- PRD -->
         <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
           <h3 class="font-semibold text-gray-800 mb-1">产品 PRD</h3>
@@ -179,6 +206,7 @@ import { useRoute } from 'vue-router'
 import {
   getColdStartStatus,
   getConfig,
+  getPlatformRules,
   listProductDocuments,
   triggerColdStartUnderstand,
   updateConfig,
@@ -222,6 +250,8 @@ const coldUnderstandStarting = ref(false)
 const coldUnderstandRunning = ref(false)
 let coldPollTimer = null
 
+const platformRules = ref(null)
+
 const materialFiles = computed(() =>
   (documents.value?.files || []).filter((f) => f.category === 'materials')
 )
@@ -229,6 +259,15 @@ const materialFiles = computed(() =>
 const docsOnlyFiles = computed(() =>
   (documents.value?.files || []).filter((f) => f.category === 'docs')
 )
+
+const platformRulesJson = computed(() => {
+  if (!platformRules.value?.guidelines) return ''
+  try {
+    return JSON.stringify(platformRules.value.guidelines, null, 2)
+  } catch {
+    return ''
+  }
+})
 
 function formatSize(n) {
   if (n < 1024) return `${n} B`
@@ -335,6 +374,12 @@ async function loadAll() {
     ])
     documents.value = docList
     userBriefDraft.value = cfg.user_brief || ''
+    const platformKey = cfg.platform || 'xiaohongshu'
+    try {
+      platformRules.value = await getPlatformRules(platformKey)
+    } catch {
+      platformRules.value = null
+    }
     await refreshColdStatus()
     if (coldUnderstandRunning.value) startColdPoll()
     else stopColdPoll()

@@ -18,6 +18,7 @@ from src.agents.base import AgentContext, AgentOutput, BaseAgent
 from src.agents.planner.campaign_memory import CampaignMemory
 from src.llm.base import BaseLLMClient, LLMMessage
 from src.orchestrator.debate import DebateAgent, debate_and_synthesize
+from src.orchestrator.platform_adapter import PlatformAdapter
 
 
 # ── 系统 Prompt 常量 ──────────────────────────────────────────────────────────
@@ -72,6 +73,7 @@ class PlannerAgent(BaseAgent):
         gemini_client: BaseLLMClient,    # PlannerA
         claude_client: BaseLLMClient,    # PlannerB + Moderator
         openai_client: BaseLLMClient,    # PlannerC
+        platform: str = "xiaohongshu",
     ):
         # 基类 llm_client 设为 Moderator（Claude）
         super().__init__(
@@ -82,6 +84,7 @@ class PlannerAgent(BaseAgent):
         self._gemini = gemini_client
         self._openai = openai_client
         self._memory = CampaignMemory
+        self._platform_adapter = PlatformAdapter(platform)
 
     async def run(self, context: AgentContext) -> AgentOutput:
         output_path = context.subdir("plan") / "daily_marketing_plan.md"
@@ -157,6 +160,8 @@ class PlannerAgent(BaseAgent):
         user_note: str,
     ) -> str:
         parts = [f"# 今日策划任务 — {date_str}\n"]
+
+        parts.append(self._platform_adapter.build_hard_rules_prompt())
 
         if strategy_text:
             parts.append(f"## 策略建议（来自 Strategist）\n{strategy_text[:2000]}")

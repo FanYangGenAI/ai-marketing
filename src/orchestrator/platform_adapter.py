@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from src.orchestrator.platform_rules import get_hard_rules_dict
+
 
 _CONFIG_DIR = Path(__file__).parent.parent / "config" / "platforms"
 
@@ -26,6 +28,25 @@ class PlatformAdapter:
         with config_path.open(encoding="utf-8") as f:
             self._config: dict = json.load(f)
         self.platform = platform
+
+    @property
+    def hard_rules(self) -> dict:
+        """Platform-mandatory rules (title/body); not user-overridable."""
+        return get_hard_rules_dict(self._config)
+
+    def build_hard_rules_prompt(self) -> str:
+        """Short block for Planner / Scriptwriter / Creator context injection."""
+        hr = self.hard_rules
+        tr = hr.get("title", {})
+        br = hr.get("body", {})
+        return "\n".join(
+            [
+                f"## 平台硬约束（{self._config.get('display_name', self.platform)}，不可违反）",
+                f"- 标题：必填={tr.get('required', True)}，最多 {int(tr.get('max_chars', 20))} 个字符（len 计数）",
+                f"- 正文：必填={br.get('required', True)}，最多 {int(br.get('max_chars', 1000))} 个字符（len 计数）",
+                "- 以上约束优先于用户偏好与创意自由度。",
+            ]
+        )
 
     # ── 原始配置访问 ──────────────────────────────────────────────────────────
 
@@ -54,10 +75,13 @@ class PlatformAdapter:
         specs = self._specs
         body = specs.get("body_chars", {})
         tags = specs.get("hashtags", {})
+        hr = self.hard_rules
+        tmax = int(hr.get("title", {}).get("max_chars", specs.get("title_max_chars", 20)))
+        bmax = int(hr.get("body", {}).get("max_chars", body.get("max", 1000)))
         return {
-            "title_max_chars": specs.get("title_max_chars", 20),
+            "title_max_chars": tmax,
             "body_min_chars": body.get("min", 0),
-            "body_max_chars": body.get("max", 99999),
+            "body_max_chars": bmax,
             "hashtag_min": tags.get("min", 1),
             "hashtag_max": tags.get("max", 8),
         }
@@ -78,6 +102,8 @@ class PlatformAdapter:
         sty = self.style_guide
 
         lines = [
+            self.build_hard_rules_prompt(),
+            "",
             f"## 平台规范：{self.platform}",
             "",
             "### 图片规格",
@@ -98,11 +124,12 @@ class PlatformAdapter:
                 "  " + "、".join(sty["avoid_words"]),
             ]
 
-        if sty.get("preferred_words"):
+        _pref = sty.get("preferred_words") or sty.get("prefer_words")
+        if _pref:
             lines += [
                 "",
                 "### 推荐用词（鼓励使用）",
-                "  " + "、".join(sty["preferred_words"]),
+                "  " + "、".join(_pref),
             ]
 
         if sty.get("tone"):
@@ -113,11 +140,15 @@ class PlatformAdapter:
     def validate_title(self, title: str) -> list[str]:
         """检查标题是否符合规范，返回问题列表（空列表表示通过）。"""
         issues = []
+        t = (title or "").strip()
+        hr = self.hard_rules.get("title", {})
+        if hr.get("required", True) and not t:
+            issues.append("标题缺失：必须提供非空标题")
         max_chars = self.text_spec.get("title_max_chars", 20)
-        if len(title) > max_chars:
-            issues.append(f"标题超长：{len(title)} 字 > {max_chars} 字上限")
+        if t and len(t) > max_chars:
+            issues.append(f"标题超长：{len(t)} 字 > {max_chars} 字上限")
         for word in self.style_guide.get("avoid_words", []):
-            if word in title:
+            if word in t:
                 issues.append(f"标题含禁用词：「{word}」")
         return issues
 
@@ -125,13 +156,17 @@ class PlatformAdapter:
         """检查正文是否符合规范，返回问题列表。"""
         issues = []
         txt = self.text_spec
-        length = len(body)
+        b = (body or "").strip()
+        hr = self.hard_rules.get("body", {})
+        if hr.get("required", True) and not b:
+            issues.append("正文缺失：必须提供非空正文")
+        length = len(b)
         if length < txt.get("body_min_chars", 0):
             issues.append(f"正文太短：{length} 字 < {txt['body_min_chars']} 字下限")
         if length > txt.get("body_max_chars", 99999):
             issues.append(f"正文超长：{length} 字 > {txt['body_max_chars']} 字上限")
         for word in self.style_guide.get("avoid_words", []):
-            if word in body:
+            if word in b:
                 issues.append(f"正文含禁用词：「{word}」")
         return issues
 

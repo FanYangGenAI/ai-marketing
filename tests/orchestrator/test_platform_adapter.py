@@ -17,9 +17,20 @@ def test_load_xiaohongshu_config(adapter):
 
 def test_build_spec_prompt_contains_key_sections(adapter):
     prompt = adapter.build_spec_prompt()
+    assert "平台硬约束" in prompt
     assert "图片规格" in prompt
     assert "文字规范" in prompt
     assert "20" in prompt          # 标题最多20字
+
+
+def test_validate_title_empty(adapter):
+    issues = adapter.validate_title("   ")
+    assert any("缺失" in i for i in issues)
+
+
+def test_validate_body_empty(adapter):
+    issues = adapter.validate_body("")
+    assert any("缺失" in i for i in issues)
 
 
 def test_validate_title_pass(adapter):

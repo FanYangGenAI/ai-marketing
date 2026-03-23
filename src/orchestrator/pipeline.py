@@ -82,7 +82,7 @@ class Pipeline:
         )
 
         self._strategist = StrategistAgent(self._gemini, self._openai, self._claude, self.platform)
-        self._planner = PlannerAgent(self._gemini, self._claude, self._openai)
+        self._planner = PlannerAgent(self._gemini, self._claude, self._openai, self.platform)
         self._scriptwriter = ScriptwriterAgent(self._openai, self._gemini, self._claude, self.platform)
         self._director = DirectorAgent(self._gemini, self.platform)
         self._creator = CreatorAgent(self._claude, self.platform)

@@ -60,13 +60,13 @@ from fastapi.staticfiles import StaticFiles
 #   - `uvicorn main:app` (from server/ directory)
 #   - `uvicorn server.main:app` (from project root)
 try:
-    from server.routers import campaigns, images
+    from server.routers import campaigns, images, platforms
 except ModuleNotFoundError:
     # Running from within server/ directory
     _server_dir = Path(__file__).parent
     if str(_server_dir) not in sys.path:
         sys.path.insert(0, str(_server_dir.parent))
-    from server.routers import campaigns, images
+    from server.routers import campaigns, images, platforms
 
 
 @asynccontextmanager
@@ -87,6 +87,7 @@ app.add_middleware(
 
 app.include_router(campaigns.router)
 app.include_router(images.router)
+app.include_router(platforms.router)
 
 # In production mode, serve frontend/dist/ as static files
 frontend_dist = os.environ.get("FRONTEND_DIST")
