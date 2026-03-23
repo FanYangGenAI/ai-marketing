@@ -12,7 +12,7 @@
     <div class="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 flex-wrap">
       <div class="flex gap-1">
         <button
-          v-for="src in ['全部', 'generate', 'screenshot', 'reuse']"
+          v-for="src in ['全部', 'generate', 'screenshot', 'reuse', 'user_upload']"
           :key="src"
           @click="filterSource = src"
           class="px-3 py-1.5 text-sm rounded-lg font-medium transition-colors"
@@ -45,8 +45,16 @@
           v-for="asset in filteredAssets"
           :key="asset.id"
           @click="selectedAsset = asset"
-          class="group bg-white rounded-xl border border-gray-200 overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
+          class="group relative bg-white rounded-xl border border-gray-200 overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
         >
+          <button
+            type="button"
+            class="absolute top-2 right-2 z-10 px-2 py-1 text-xs rounded-md bg-red-600/90 hover:bg-red-700 text-white shadow disabled:opacity-50"
+            :disabled="deleting"
+            @click.stop="removeAssetById(asset.id)"
+          >
+            删除
+          </button>
           <!-- Thumbnail -->
           <div class="aspect-[3/4] bg-gray-100 overflow-hidden">
             <img
@@ -65,6 +73,7 @@
               >{{ asset.source }}</span>
               <span class="text-xs text-gray-400">{{ asset.created_at }}</span>
             </div>
+            <p v-if="asset.note" class="text-[10px] text-gray-500 mt-1 line-clamp-2">{{ asset.note }}</p>
           </div>
         </div>
       </div>
@@ -138,6 +147,34 @@
                   <span v-for="tag in selectedAsset.tags" :key="tag" class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">{{ tag }}</span>
                 </div>
               </div>
+              <div>
+                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1">备注</p>
+                <textarea
+                  v-model="noteDraft"
+                  rows="3"
+                  class="w-full text-sm border border-gray-200 rounded-lg px-2 py-1.5 text-gray-800"
+                  placeholder="用途、场景、是否可作首图等"
+                />
+              </div>
+              <div class="flex flex-wrap gap-2 pt-2">
+                <button
+                  type="button"
+                  :disabled="noteSaving"
+                  class="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded-lg"
+                  @click="saveNote"
+                >
+                  {{ noteSaving ? '保存中…' : '保存备注' }}
+                </button>
+                <button
+                  type="button"
+                  :disabled="deleting"
+                  class="px-3 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm rounded-lg"
+                  @click="removeAsset"
+                >
+                  {{ deleting ? '删除中…' : '从素材库删除' }}
+                </button>
+              </div>
+              <p v-if="modalMsg" class="text-xs" :class="modalErr ? 'text-red-600' : 'text-green-600'">{{ modalMsg }}</p>
             </div>
           </div>
         </div>
@@ -149,7 +186,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { getAssets, imageUrl } from '../api/index.js'
+import { deleteAsset, getAssets, imageUrl, patchAssetNote } from '../api/index.js'
 
 const route = useRoute()
 const product = computed(() => decodeURIComponent(route.params.product || ''))
@@ -160,11 +197,16 @@ const loadError = ref(null)
 const filterSource = ref('全部')
 const searchQuery = ref('')
 const selectedAsset = ref(null)
+const noteDraft = ref('')
+const noteSaving = ref(false)
+const deleting = ref(false)
+const modalMsg = ref('')
+const modalErr = ref(false)
 
 const allAssets = computed(() => assetsData.value?.assets || [])
 
 const filteredAssets = computed(() => {
-  let list = allAssets.value
+  let list = allAssets.value.filter(a => !a.disabled)
   if (filterSource.value !== '全部') {
     list = list.filter(a => a.source === filterSource.value)
   }
@@ -191,6 +233,7 @@ function sourceClass(source) {
     case 'generate': return 'bg-violet-100 text-violet-700'
     case 'screenshot': return 'bg-amber-100 text-amber-700'
     case 'reuse': return 'bg-blue-100 text-blue-700'
+    case 'user_upload': return 'bg-emerald-100 text-emerald-800'
     default: return 'bg-gray-100 text-gray-600'
   }
 }
@@ -204,6 +247,67 @@ async function load() {
     loadError.value = '无法加载素材库：' + e.message
   } finally {
     loading.value = false
+  }
+}
+
+watch(selectedAsset, (a) => {
+  noteDraft.value = a?.note || ''
+  modalMsg.value = ''
+  modalErr.value = false
+})
+
+async function saveNote() {
+  if (!selectedAsset.value) return
+  noteSaving.value = true
+  modalMsg.value = ''
+  modalErr.value = false
+  try {
+    await patchAssetNote(product.value, selectedAsset.value.id, noteDraft.value)
+    modalMsg.value = '备注已保存'
+    await load()
+    const id = selectedAsset.value.id
+    const next = (assetsData.value?.assets || []).find(x => x.id === id)
+    selectedAsset.value = next || null
+  } catch (e) {
+    modalErr.value = true
+    modalMsg.value = e.message || '保存失败'
+  } finally {
+    noteSaving.value = false
+  }
+}
+
+async function removeAsset() {
+  if (!selectedAsset.value) return
+  if (!confirm('确定从素材库删除该素材？（软删除，流水线将不再使用）')) return
+  deleting.value = true
+  modalMsg.value = ''
+  modalErr.value = false
+  try {
+    await deleteAsset(product.value, selectedAsset.value.id)
+    selectedAsset.value = null
+    await load()
+  } catch (e) {
+    modalErr.value = true
+    modalMsg.value = e.message || '删除失败'
+  } finally {
+    deleting.value = false
+  }
+}
+
+async function removeAssetById(assetId) {
+  if (!assetId) return
+  if (!confirm('确定从素材库删除该素材？（软删除，流水线将不再使用）')) return
+  deleting.value = true
+  try {
+    await deleteAsset(product.value, assetId)
+    if (selectedAsset.value?.id === assetId) {
+      selectedAsset.value = null
+    }
+    await load()
+  } catch (e) {
+    loadError.value = '删除失败：' + (e.message || '未知错误')
+  } finally {
+    deleting.value = false
   }
 }
 

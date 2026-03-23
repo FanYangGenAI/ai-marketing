@@ -139,7 +139,13 @@ class GeminiClient(BaseLLMClient):
         for img_path in image_paths:
             p = Path(img_path)
             if p.exists():
-                mime = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
+                suf = p.suffix.lower()
+                if suf == ".png":
+                    mime = "image/png"
+                elif suf == ".webp":
+                    mime = "image/webp"
+                else:
+                    mime = "image/jpeg"
                 parts.append(types.Part.from_bytes(data=p.read_bytes(), mime_type=mime))
         parts.append(types.Part(text=text))
 

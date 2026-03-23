@@ -21,6 +21,7 @@ from pathlib import Path
 
 from src.agents.base import AgentContext, AgentOutput, BaseAgent
 from src.llm.base import BaseLLMClient
+from src.cold_start.retrieval import load_product_context_for_agents
 from src.orchestrator.debate import DebateAgent, debate_and_synthesize
 from src.orchestrator.lesson_memory import LessonMemory
 
@@ -125,6 +126,7 @@ class StrategistAgent(BaseAgent):
             positive_lessons=positive_lessons,
             negative_lessons=negative_lessons,
             is_cold_start=is_cold_start,
+            campaign_root=context.campaign_root,
         )
 
         # ── Debate Agents ─────────────────────────────────────────────────────
@@ -172,6 +174,7 @@ class StrategistAgent(BaseAgent):
         positive_lessons: list[dict],
         negative_lessons: list[dict],
         is_cold_start: bool,
+        campaign_root: Path,
     ) -> str:
         parts = [f"# 今日策略任务 — {date_str}\n启动模式：{'冷启动（首次运营）' if is_cold_start else '热启动（有历史数据）'}"]
 
@@ -217,5 +220,9 @@ class StrategistAgent(BaseAgent):
                 "- 混合大流量话题(100w+)与垂直话题(10-50w)，比例 3:3\n"
                 "- 发布时间：工作日 18:00-22:00，周末 10:00-12:00 或 20:00-22:00"
             )
+
+        product_ctx = load_product_context_for_agents(campaign_root)
+        if product_ctx.strip():
+            parts.append(product_ctx)
 
         return "\n\n".join(parts)

@@ -70,12 +70,71 @@
           </p>
         </div>
 
+        <!-- Cold-start images → manifest + Asset Library -->
+        <div class="bg-white rounded-xl shadow-sm border border-blue-100 p-5 ring-1 ring-blue-50">
+          <h3 class="font-semibold text-gray-800 mb-1">冷启动图片（入库 + 可理解）</h3>
+          <p class="text-xs text-gray-500 mb-3">
+            上传 <strong class="text-gray-700">PNG / JPG / WebP</strong> 至素材库并登记清单；可一键生成
+            <code class="text-gray-700 bg-gray-100 px-1 rounded">product_profile.json</code> 供 Strategist 使用。
+            <span class="text-amber-700 font-medium">不支持视频、GIF 动图上传。</span>
+          </p>
+          <div class="flex flex-wrap items-center gap-3 mb-3">
+            <label class="text-sm text-gray-600">分类标签</label>
+            <select
+              v-model="coldTag"
+              class="text-sm border border-gray-300 rounded-lg px-2 py-1.5 text-gray-800"
+            >
+              <option value="brand">brand（Logo / 品牌）</option>
+              <option value="product_ui">product_ui（产品界面）</option>
+              <option value="marketing_ref">marketing_ref（营销参考图）</option>
+            </select>
+          </div>
+          <label class="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-800 cursor-pointer mb-3">
+            <span>选择图片（可多选）</span>
+            <input
+              type="file"
+              class="hidden"
+              accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
+              multiple
+              @change="onColdPick"
+            />
+          </label>
+          <div v-if="coldNames.length" class="text-xs text-gray-600 mb-2">{{ coldNames.join(', ') }}</div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              :disabled="!coldFiles.length || coldUploading"
+              class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg"
+              @click="uploadColdImages"
+            >
+              {{ coldUploading ? '上传中…' : '上传到素材库' }}
+            </button>
+            <button
+              type="button"
+              :disabled="coldUnderstandRunning || coldUnderstandStarting"
+              class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg"
+              @click="runUnderstand"
+            >
+              {{ coldUnderstandStarting ? '启动中…' : '运行产品理解' }}
+            </button>
+          </div>
+          <p v-if="coldMsg" class="text-xs mt-2" :class="coldErr ? 'text-red-600' : 'text-green-600'">{{ coldMsg }}</p>
+          <div class="mt-3 text-xs text-gray-600 space-y-1">
+            <p>
+              理解任务状态：
+              <span class="font-mono">{{ coldStatus?.status || 'idle' }}</span>
+              <span v-if="coldStatus?.process_running" class="text-blue-600 ml-1">（子进程运行中）</span>
+            </p>
+            <p v-if="coldStatus?.product_profile_exists" class="text-green-700">已生成 product_profile.json</p>
+          </div>
+        </div>
+
         <!-- Reference attachments -->
         <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
           <h3 class="font-semibold text-gray-800 mb-1">附件文件（可选）</h3>
           <p class="text-xs text-gray-500 mb-3">
-            保存到 <code class="text-gray-700 bg-gray-100 px-1 rounded">docs/materials/</code>（图片、截图、视频、文档等）。
-            当前版本<strong class="text-gray-700">不会</strong>自动送入 LLM 或写入素材库；仅便于本地归档与后续扩展。
+            保存到 <code class="text-gray-700 bg-gray-100 px-1 rounded">docs/materials/</code>（任意文件归档）。
+            若需进入流水线素材库与产品理解，请使用上方「冷启动图片」。
           </p>
           <label class="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-800 cursor-pointer mb-3">
             <span>选择文件（可多选）</span>
@@ -115,12 +174,15 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
+  getColdStartStatus,
   getConfig,
   listProductDocuments,
+  triggerColdStartUnderstand,
   updateConfig,
+  uploadColdStartImages,
   uploadProductAttachments,
   uploadProductPrd,
 } from '../api/index.js'
@@ -148,6 +210,17 @@ const attachNames = ref([])
 const attachUploading = ref(false)
 const attachMessage = ref('')
 const attachError = ref(false)
+
+const coldTag = ref('product_ui')
+const coldFiles = ref([])
+const coldNames = ref([])
+const coldUploading = ref(false)
+const coldMsg = ref('')
+const coldErr = ref(false)
+const coldStatus = ref(null)
+const coldUnderstandStarting = ref(false)
+const coldUnderstandRunning = ref(false)
+let coldPollTimer = null
 
 const materialFiles = computed(() =>
   (documents.value?.files || []).filter((f) => f.category === 'materials')
@@ -179,6 +252,79 @@ function onAttachPick(e) {
   e.target.value = ''
 }
 
+function onColdPick(e) {
+  const list = e.target.files ? Array.from(e.target.files) : []
+  coldFiles.value = list
+  coldNames.value = list.map((x) => x.name)
+  coldMsg.value = ''
+  e.target.value = ''
+}
+
+async function refreshColdStatus() {
+  try {
+    coldStatus.value = await getColdStartStatus(product.value)
+    coldUnderstandRunning.value =
+      Boolean(coldStatus.value?.process_running) || coldStatus.value?.status === 'running'
+    if (
+      coldPollTimer &&
+      !coldUnderstandRunning.value &&
+      ['done', 'error', 'skipped'].includes(coldStatus.value?.status)
+    ) {
+      stopColdPoll()
+    }
+  } catch {
+    coldStatus.value = null
+  }
+}
+
+function startColdPoll() {
+  if (coldPollTimer) clearInterval(coldPollTimer)
+  coldPollTimer = setInterval(refreshColdStatus, 2000)
+}
+
+function stopColdPoll() {
+  if (coldPollTimer) {
+    clearInterval(coldPollTimer)
+    coldPollTimer = null
+  }
+}
+
+async function uploadColdImages() {
+  if (!coldFiles.value.length) return
+  coldUploading.value = true
+  coldMsg.value = ''
+  coldErr.value = false
+  try {
+    const res = await uploadColdStartImages(product.value, coldFiles.value, coldTag.value)
+    coldMsg.value = `已入库 ${res.items?.length || 0} 张图片`
+    coldFiles.value = []
+    coldNames.value = []
+    await refreshColdStatus()
+  } catch (e) {
+    coldErr.value = true
+    coldMsg.value = e.message || '上传失败'
+  } finally {
+    coldUploading.value = false
+  }
+}
+
+async function runUnderstand() {
+  coldUnderstandStarting.value = true
+  coldMsg.value = ''
+  coldErr.value = false
+  try {
+    await triggerColdStartUnderstand(product.value)
+    coldMsg.value = '理解任务已启动（后台运行，请稍后查看状态）'
+    startColdPoll()
+    await refreshColdStatus()
+  } catch (e) {
+    coldErr.value = true
+    coldMsg.value = e.message || '启动失败'
+  } finally {
+    coldUnderstandStarting.value = false
+  }
+}
+
 async function loadAll() {
   loading.value = true
   loadError.value = null
@@ -189,6 +335,9 @@ async function loadAll() {
     ])
     documents.value = docList
     userBriefDraft.value = cfg.user_brief || ''
+    await refreshColdStatus()
+    if (coldUnderstandRunning.value) startColdPoll()
+    else stopColdPoll()
   } catch (e) {
     loadError.value = e.message || '加载失败'
   } finally {
@@ -250,4 +399,6 @@ async function uploadAttachments() {
 }
 
 watch(product, loadAll, { immediate: true })
+
+onUnmounted(() => stopColdPoll())
 </script>

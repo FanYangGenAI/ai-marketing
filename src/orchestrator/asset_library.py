@@ -6,7 +6,7 @@ Asset Library 管理器
 import hashlib
 import json
 import shutil
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 
@@ -21,12 +21,14 @@ class AssetRecord:
     file: str                      # 相对于 asset_library/ 的路径
     size: str                      # 如 "1080x1440"
     created_at: str                # ISO date
-    source: str                    # "gemini_web" | "gemini_cli" | "gemini_api" | "screenshot"
+    source: str                    # "gemini_web" | ... | "user_upload"
     prompt: str                    # 生成时的 prompt（截图则为 URL）
     tags: list[str] = field(default_factory=list)
     platform: str = "xiaohongshu"
     used_in: list[str] = field(default_factory=list)  # 哪些 daily output 用了此素材
     reuse_count: int = 0
+    note: str = ""                 # user-editable remark (cold-start / asset library UI)
+    disabled: bool = False         # soft-delete: hidden from summaries and reuse
 
 
 @dataclass
@@ -69,11 +71,13 @@ class AssetLibrary:
         )
 
     def find_by_tags(self, tags: list[str], asset_type: str = "image") -> list[AssetRecord]:
-        """标签检索：返回包含所有指定标签的素材列表。"""
+        """标签检索：返回包含所有指定标签的素材列表（不含 disabled）。"""
         tag_set = set(tags)
         return [
             a for a in self._index.assets
-            if a.type == asset_type and tag_set.issubset(set(a.tags))
+            if not a.disabled
+            and a.type == asset_type
+            and tag_set.issubset(set(a.tags))
         ]
 
     def get_by_id(self, asset_id: str) -> AssetRecord | None:
@@ -97,6 +101,7 @@ class AssetLibrary:
         size: str = "",
         platform: str = "xiaohongshu",
         asset_type: str = "image",
+        note: str = "",
     ) -> AssetRecord:
         """
         将新素材加入 Asset Library。
@@ -140,6 +145,7 @@ class AssetLibrary:
             prompt=prompt,
             tags=tags or [],
             platform=platform,
+            note=note or "",
         )
         self._index.assets.append(record)
         self._save_index()
@@ -153,12 +159,41 @@ class AssetLibrary:
             record.reuse_count += 1
             self._save_index()
 
+    def update_note(self, asset_id: str, note: str) -> AssetRecord | None:
+        record = self.get_by_id(asset_id)
+        if not record:
+            return None
+        record.note = note
+        self._save_index()
+        return record
+
+    def set_disabled(self, asset_id: str, disabled: bool = True) -> AssetRecord | None:
+        record = self.get_by_id(asset_id)
+        if not record:
+            return None
+        record.disabled = disabled
+        self._save_index()
+        return record
+
+    def list_active_assets(self, asset_type: str | None = "image") -> list[AssetRecord]:
+        """All non-disabled assets, optionally filtered by type."""
+        out = [a for a in self._index.assets if not a.disabled]
+        if asset_type is not None:
+            out = [a for a in out if a.type == asset_type]
+        return out
+
     # ── 持久化 ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _record_from_dict(a: dict) -> AssetRecord:
+        known = {f.name for f in fields(AssetRecord)}
+        filtered = {k: v for k, v in a.items() if k in known}
+        return AssetRecord(**filtered)
 
     def _load_index(self) -> AssetLibraryIndex:
         if self.index_path.exists():
             data = json.loads(self.index_path.read_text(encoding="utf-8"))
-            assets = [AssetRecord(**a) for a in data.get("assets", [])]
+            assets = [self._record_from_dict(a) for a in data.get("assets", [])]
             return AssetLibraryIndex(version=data.get("version", "1.0"), assets=assets)
         return AssetLibraryIndex()
 

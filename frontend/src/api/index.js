@@ -119,6 +119,65 @@ export async function uploadProductAttachments(product, files) {
   return res.json()
 }
 
+/** Cold-start: images only (png/jpg/webp). tag: brand | product_ui | marketing_ref */
+export async function uploadColdStartImages(product, files, tag = 'product_ui') {
+  if (!files.length) return { status: 'ok', items: [] }
+  const form = new FormData()
+  form.append('tag', tag)
+  for (const f of files) {
+    form.append('files', f)
+  }
+  const res = await fetch(
+    `/api/products/${encodeURIComponent(product)}/cold-start/images`,
+    { method: 'POST', body: form }
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Cold-start upload → ${res.status}: ${text}`)
+  }
+  return res.json()
+}
+
+export async function getColdStartStatus(product) {
+  return apiFetch(`/api/products/${encodeURIComponent(product)}/cold-start/status`)
+}
+
+export async function triggerColdStartUnderstand(product) {
+  return apiPost(`/api/products/${encodeURIComponent(product)}/cold-start/understand`, {})
+}
+
+export async function getProductProfile(product) {
+  return apiFetch(`/api/products/${encodeURIComponent(product)}/cold-start/profile`)
+}
+
+export async function patchAssetNote(product, assetId, note) {
+  const res = await fetch(
+    `/api/products/${encodeURIComponent(product)}/assets/${encodeURIComponent(assetId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note }),
+    }
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`PATCH asset → ${res.status}: ${text}`)
+  }
+  return res.json()
+}
+
+export async function deleteAsset(product, assetId) {
+  const res = await fetch(
+    `/api/products/${encodeURIComponent(product)}/assets/${encodeURIComponent(assetId)}`,
+    { method: 'DELETE' }
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`DELETE asset → ${res.status}: ${text}`)
+  }
+  return res.json()
+}
+
 export async function updateConfig(product, updates) {
   return apiPost(`/api/products/${encodeURIComponent(product)}/config`, updates)
 }

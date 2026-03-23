@@ -7,7 +7,9 @@ from datetime import date as date_cls
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+import tempfile
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -17,6 +19,8 @@ router = APIRouter()
 
 # Max bytes per uploaded file (PRD or attachment)
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+
+ALLOWED_COLD_START_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 
 # ── Pydantic 请求体模型 ────────────────────────────────────────────────────────
 
@@ -35,8 +39,13 @@ class FeedbackRequest(BaseModel):
     action: str          # "accept" | "reject"
     reason: str = ""     # 拒绝时填写原因
 
+
+class AssetNotePatchRequest(BaseModel):
+    note: str = ""
+
 # ── 运行状态追踪（内存，进程级别）─────────────────────────────────────────────
 _running_processes: Dict[str, subprocess.Popen] = {}
+_understanding_processes: Dict[str, subprocess.Popen] = {}
 
 def _get_repo_root() -> Path:
     """获取项目根目录（server/ 的上级）。"""
@@ -241,10 +250,10 @@ async def get_file(product: str, date: str, path: str):
 
 @router.get("/api/products/{product}/assets")
 async def get_assets(product: str):
-    """Read asset_library/index.json for a product."""
+    """Read asset_library/index.json for a product (empty index if not yet created)."""
     index_file = CAMPAIGNS_ROOT / product / "asset_library" / "index.json"
     if not index_file.exists():
-        raise HTTPException(status_code=404, detail="Asset library not found")
+        return {"version": "1.0", "assets": []}
 
     data = _read_json(index_file)
 
@@ -253,6 +262,10 @@ async def get_assets(product: str):
         for asset in data["assets"]:
             if "file" in asset:
                 asset["file"] = asset["file"].replace("\\", "/")
+            if "note" not in asset:
+                asset["note"] = ""
+            if "disabled" not in asset:
+                asset["disabled"] = False
 
     return data
 
@@ -281,7 +294,16 @@ async def create_product(req: CreateProductRequest):
 
     # 创建目录结构（docs/materials：参考文档与附件）
     # Strategy artifacts live under daily/{date}/strategy/ at runtime; no product-level strategy/ folder
-    for subdir in ["config", "docs", "docs/materials", "memory", "asset_library", "daily"]:
+    for subdir in [
+        "config",
+        "docs",
+        "docs/materials",
+        "memory",
+        "asset_library",
+        "daily",
+        "attachments",
+        "attachments/raw",
+    ]:
         (product_dir / subdir).mkdir(parents=True, exist_ok=True)
 
     # 写入 product_config.json
@@ -499,6 +521,176 @@ async def run_pipeline(product: str, req: RunPipelineRequest):
         raise HTTPException(status_code=500, detail=f"启动 Pipeline 失败：{e}")
 
     return {"status": "started", "pid": proc.pid}
+
+
+# ── Cold-start ingestion (text + images, product profile) ───────────────────────
+
+
+@router.get("/api/products/{product}/cold-start/status")
+async def cold_start_status(product: str):
+    """Understanding job state + quick manifest summary."""
+    product_dir = CAMPAIGNS_ROOT / product
+    if not product_dir.exists():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+
+    state_path = product_dir / "attachments" / "understanding_state.json"
+    state: Dict[str, Any] = {"status": "idle", "message": "", "updated_at": None}
+    if state_path.exists():
+        try:
+            state = {**state, **_read_json(state_path)}
+        except Exception:
+            pass
+
+    proc = _understanding_processes.get(product)
+    running = proc is not None and proc.poll() is None
+    if running:
+        state = {**state, "status": "running", "message": state.get("message", "")}
+
+    profile_exists = (product_dir / "config" / "product_profile.json").exists()
+    return {
+        **state,
+        "process_running": running,
+        "product_profile_exists": profile_exists,
+    }
+
+
+@router.post("/api/products/{product}/cold-start/images")
+async def upload_cold_start_images(
+    product: str,
+    files: List[UploadFile] = File(...),
+    tag: str = Form("product_ui"),
+):
+    """
+    Upload images into attachments/raw + manifest + Asset Library.
+    Allowed: png, jpg, jpeg, webp (no video/GIF).
+    """
+    product_dir = CAMPAIGNS_ROOT / product
+    if not product_dir.exists():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+
+    if tag not in ("brand", "product_ui", "marketing_ref"):
+        tag = "product_ui"
+
+    tmp_paths: List[Path] = []
+    try:
+        sys.path.insert(0, str(_get_repo_root()))
+        from src.cold_start.ingest import ingest_image_files
+
+        for up in files:
+            if not up.filename:
+                continue
+            suf = Path(up.filename).suffix.lower()
+            if suf not in ALLOWED_COLD_START_IMAGE_EXT:
+                continue
+            fd, name = tempfile.mkstemp(suffix=suf)
+            os.close(fd)
+            tmp_p = Path(name)
+            await _save_upload_stream(tmp_p, up)
+            tmp_paths.append(tmp_p)
+
+        if not tmp_paths:
+            raise HTTPException(
+                status_code=400,
+                detail="No valid image files (allowed: png, jpg, jpeg, webp)",
+            )
+
+        saved = ingest_image_files(product_dir, tmp_paths, default_tag=tag)
+        return {"status": "ok", "items": saved, "tag": tag}
+    finally:
+        for p in tmp_paths:
+            p.unlink(missing_ok=True)
+
+
+@router.post("/api/products/{product}/cold-start/understand")
+async def trigger_cold_start_understand(product: str):
+    """Run understanding job in a subprocess (writes product_profile.json)."""
+    product_dir = CAMPAIGNS_ROOT / product
+    if not product_dir.exists():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+
+    existing = _understanding_processes.get(product)
+    if existing is not None and existing.poll() is None:
+        raise HTTPException(status_code=409, detail="理解任务正在运行中")
+
+    repo_root = _get_repo_root()
+    cmd = [
+        sys.executable,
+        "-m",
+        "src.cold_start.cli",
+        "--campaign-root",
+        str(product_dir.resolve()),
+    ]
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(repo_root),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        _understanding_processes[product] = proc
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"启动理解任务失败：{e}")
+
+    return {"status": "started", "pid": proc.pid}
+
+
+@router.patch("/api/products/{product}/assets/{asset_id}")
+async def patch_asset_note(product: str, asset_id: str, req: AssetNotePatchRequest):
+    """Update user note on an asset (Asset Library + manifest if linked)."""
+    product_dir = CAMPAIGNS_ROOT / product
+    if not product_dir.exists():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+
+    sys.path.insert(0, str(_get_repo_root()))
+    from src.orchestrator.asset_library import AssetLibrary
+    from src.cold_start.manifest import item_by_asset_id, load_manifest, save_manifest
+
+    lib = AssetLibrary(str(product_dir / "asset_library"))
+    updated = lib.update_note(asset_id, req.note)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    man = load_manifest(product_dir)
+    it = item_by_asset_id(man, asset_id)
+    if it:
+        it.note = req.note
+        save_manifest(product_dir, man)
+
+    return {"status": "ok", "asset": {"id": updated.id, "note": updated.note}}
+
+
+@router.delete("/api/products/{product}/assets/{asset_id}")
+async def delete_asset(product: str, asset_id: str):
+    """Soft-delete asset (disabled) and mark manifest item removed."""
+    product_dir = CAMPAIGNS_ROOT / product
+    if not product_dir.exists():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+
+    sys.path.insert(0, str(_get_repo_root()))
+    from src.orchestrator.asset_library import AssetLibrary
+    from src.cold_start.manifest import item_by_asset_id, load_manifest, mark_item_removed, save_manifest
+
+    lib = AssetLibrary(str(product_dir / "asset_library"))
+    rec = lib.set_disabled(asset_id, True)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    man = load_manifest(product_dir)
+    it = item_by_asset_id(man, asset_id)
+    if it:
+        mark_item_removed(man, it.id)
+        save_manifest(product_dir, man)
+
+    return {"status": "ok", "id": asset_id}
+
+
+@router.get("/api/products/{product}/cold-start/profile")
+async def get_product_profile(product: str):
+    """Return product_profile.json for UI review."""
+    path = CAMPAIGNS_ROOT / product / "config" / "product_profile.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="product_profile.json not found")
+    return _read_json(path)
 
 
 @router.post("/api/products/{product}/{date}/feedback")

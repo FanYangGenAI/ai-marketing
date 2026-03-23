@@ -93,3 +93,51 @@ def test_index_persists(tmp_path, sample_image):
     lib2 = AssetLibrary(library_root=root)
     assert len(lib2._index.assets) == 1
     assert lib2._index.assets[0].tags == ["test"]
+
+
+def test_note_and_disabled_roundtrip(tmp_path, sample_image):
+    root = str(tmp_path / "asset_library")
+    lib = AssetLibrary(library_root=root)
+    r = lib.add(sample_image, source="user_upload", prompt="u", note="n1", tags=["test"])
+    lib.update_note(r.id, "updated")
+    assert lib.get_by_id(r.id).note == "updated"
+    assert len(lib.list_active_assets()) == 1
+    assert len(lib.find_by_tags(["test"])) == 1
+    lib.set_disabled(r.id, True)
+    assert len(lib.list_active_assets()) == 0
+    assert lib.find_by_tags(["test"]) == []
+
+
+def test_load_legacy_index_without_note_field(tmp_path, sample_image):
+    root = tmp_path / "asset_library"
+    root.mkdir(parents=True)
+    legacy = {
+        "version": "1.0",
+        "assets": [
+            {
+                "id": "asset_abc",
+                "hash": "md5:deadbeef",
+                "type": "image",
+                "file": "images/x.jpg",
+                "size": "1x1",
+                "created_at": "2020-01-01",
+                "source": "screenshot",
+                "prompt": "p",
+                "tags": [],
+                "platform": "xiaohongshu",
+                "used_in": [],
+                "reuse_count": 0,
+            }
+        ],
+    }
+    import json
+    (root / "index.json").write_text(json.dumps(legacy), encoding="utf-8")
+    img_file = root / "images" / "x.jpg"
+    img_file.parent.mkdir(parents=True)
+    img_file.write_bytes(b"fake")
+
+    lib = AssetLibrary(library_root=str(root))
+    a = lib.get_by_id("asset_abc")
+    assert a is not None
+    assert a.note == ""
+    assert a.disabled is False

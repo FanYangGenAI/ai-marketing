@@ -338,9 +338,9 @@ class DirectorAgent(BaseAgent):
     def _resolve_reuse(task: dict, asset_lib: AssetLibrary) -> Path:
         asset_id = task.get("reuse_asset_id", "")
         record = asset_lib.get_by_id(asset_id)
-        if record:
+        if record and not record.disabled:
             return Path(asset_lib.get_full_path(record))
-        raise FileNotFoundError(f"Asset Library 中未找到 asset_id: {asset_id}")
+        raise FileNotFoundError(f"Asset Library 中未找到或已禁用 asset_id: {asset_id}")
 
     @staticmethod
     def _run_skill(script: str, *args: str) -> None:
@@ -369,13 +369,16 @@ class DirectorAgent(BaseAgent):
 
     @staticmethod
     def _build_asset_summary(asset_lib: AssetLibrary) -> str:
-        assets = asset_lib._index.assets
+        assets = asset_lib.list_active_assets("image")
         if not assets:
-            return "（Asset Library 暂无历史素材）"
-        lines = [f"现有 {len(assets)} 个素材："]
+            return "（Asset Library 暂无可用素材）"
+        lines = [f"现有 {len(assets)} 个可用素材（不含已删除）："]
         for a in assets[:20]:  # 最多展示 20 个
+            p = (a.prompt or "")[:60]
+            note = (a.note or "").strip()
+            extra = f' note="{note[:80]}"' if note else ""
             lines.append(
-                f"- [{a.id}] {a.type} tags={a.tags} prompt=\"{a.prompt[:60]}\""
+                f"- [{a.id}] type={a.type} source={a.source} tags={a.tags} prompt=\"{p}\"{extra}"
             )
         return "\n".join(lines)
 
