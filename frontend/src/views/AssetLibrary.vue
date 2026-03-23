@@ -49,7 +49,7 @@
         >
           <button
             type="button"
-            class="absolute top-2 right-2 z-10 px-2 py-1 text-xs rounded-md bg-red-600/90 hover:bg-red-700 text-white shadow disabled:opacity-50"
+            class="absolute top-2 right-2 z-10 px-2 py-1 text-xs rounded-md bg-red-600/90 hover:bg-red-700 text-white shadow disabled:opacity-50 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity"
             :disabled="deleting"
             @click.stop="removeAssetById(asset.id)"
           >
