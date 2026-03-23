@@ -95,10 +95,11 @@ class DirectorAgent(BaseAgent):
 
     async def run(self, context: AgentContext) -> AgentOutput:
         director_dir = context.subdir("director")
+        attempt_dir = context.stage_attempt_dir("director")
         result_path = director_dir / "director_task_result.json"
         log_path = director_dir / "director_raw.md"
-        raw_dir = context.subdir("assets", "raw")
-        processed_dir = context.subdir("assets", "processed")
+        raw_dir = context.subdir("assets", "attempts", context.attempt_id, "raw")
+        processed_dir = context.subdir("assets", "attempts", context.attempt_id, "processed")
 
         # ── 读取脚本 ──────────────────────────────────────────────────────────
         script_path = context.daily_folder / "script" / "daily_marketing_script.md"
@@ -121,6 +122,8 @@ class DirectorAgent(BaseAgent):
 
         # ── 写入结果 ──────────────────────────────────────────────────────────
         self._write_json(result_path, executed)
+        self._copy_attempt_file(result_path, attempt_dir / "director_task_result.json")
+        self._copy_attempt_file(log_path, attempt_dir / "director_raw.md")
 
         success_count = sum(1 for t in executed if t.get("success"))
         summary = f"素材编排完成：{success_count}/{len(executed)} 张成功"
@@ -128,7 +131,13 @@ class DirectorAgent(BaseAgent):
         return AgentOutput(
             output_path=result_path,
             summary=summary,
-            data={"tasks": executed},
+            data={
+                "tasks": executed,
+                "attempt_artifacts": [
+                    str(attempt_dir / "director_task_result.json"),
+                    str(attempt_dir / "director_raw.md"),
+                ],
+            },
         )
 
     # ── 规划 ─────────────────────────────────────────────────────────────────

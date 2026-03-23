@@ -108,6 +108,7 @@ class ScriptwriterAgent(BaseAgent):
 
     async def run(self, context: AgentContext) -> AgentOutput:
         output_path = context.subdir("script") / "daily_marketing_script.md"
+        attempt_dir = context.stage_attempt_dir("script")
         date_str = context.run_date.strftime("%Y-%m-%d")
 
         # ── 读取前置输入 ──────────────────────────────────────────────────────
@@ -152,12 +153,20 @@ class ScriptwriterAgent(BaseAgent):
         )
 
         self._write_output(output_path, result.final_output)
+        self._copy_attempt_file(output_path, attempt_dir / "daily_marketing_script.md")
+        self._copy_attempt_file(log_path, attempt_dir / "debate_raw.md")
 
         summary = self._extract_title(result.final_output)
         return AgentOutput(
             output_path=output_path,
             summary=summary,
-            data={"rounds": result.rounds},
+            data={
+                "rounds": result.rounds,
+                "attempt_artifacts": [
+                    str(attempt_dir / "daily_marketing_script.md"),
+                    str(attempt_dir / "debate_raw.md"),
+                ],
+            },
         )
 
     @staticmethod

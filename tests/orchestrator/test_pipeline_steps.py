@@ -144,3 +144,28 @@ class TestAgentContextFields:
             user_brief="产品描述",
         )
         assert ctx.user_brief == "产品描述"
+
+    def test_attempt_id_default_and_custom(self, tmp_path):
+        """attempt_id 默认为 attempt_00，且支持通过 extra 覆盖。"""
+        from datetime import date
+        from src.agents.base import AgentContext
+
+        ctx = AgentContext(
+            campaign_root=tmp_path,
+            daily_folder=tmp_path,
+            run_date=date.today(),
+            product_name="Test",
+        )
+        assert ctx.attempt_id == "attempt_00"
+
+        ctx2 = AgentContext(
+            campaign_root=tmp_path,
+            daily_folder=tmp_path,
+            run_date=date.today(),
+            product_name="Test",
+            extra={"attempt_id": "attempt_07"},
+        )
+        assert ctx2.attempt_id == "attempt_07"
+        p = ctx2.stage_attempt_dir("scriptwriter")
+        assert p.exists()
+        assert "attempt_07" in str(p)

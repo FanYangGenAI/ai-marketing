@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from src.agents.base import AgentContext, AgentOutput
@@ -194,8 +194,21 @@ class Pipeline:
         # ── 主执行循环（支持 Audit 失败回路）────────────────────────────────
         retry_count = state.get("_retry_count", 0)
         steps_to_run = STEPS[start_idx:end_idx]
+        history = self._load_run_history(daily_folder)
+        attempt_seq = len(history.get("attempts", []))
 
         while True:
+            attempt_id = f"attempt_{attempt_seq:02d}"
+            attempt_record = {
+                "attempt_id": attempt_id,
+                "retry_count": retry_count,
+                "started_at": self._iso_now(),
+                "steps": [],
+            }
+            history.setdefault("attempts", []).append(attempt_record)
+            self._save_run_history(daily_folder, history)
+            context.extra["attempt_id"] = attempt_id
+
             for step in steps_to_run:
                 log.info(f"▶ 开始阶段：{step}")
                 try:
@@ -208,6 +221,16 @@ class Pipeline:
                         "success": output.success,
                     }
                     self._save_state(daily_folder, state)
+                    attempt_record["steps"].append(
+                        {
+                            "step": step,
+                            "success": output.success,
+                            "summary": output.summary,
+                            "output_path": str(output.output_path),
+                            "artifacts": list(output.data.get("attempt_artifacts", [])),
+                        }
+                    )
+                    self._save_run_history(daily_folder, history)
 
                     status_icon = "✅" if output.success else "⚠️"
                     log.info(f"{status_icon} {step} 完成：{output.summary}")
@@ -216,13 +239,23 @@ class Pipeline:
                     log.error(f"❌ 阶段 '{step}' 执行失败：{e}")
                     state[step] = {"done": False, "error": str(e)}
                     self._save_state(daily_folder, state)
+                    attempt_record["steps"].append(
+                        {"step": step, "success": False, "error": str(e)}
+                    )
+                    attempt_record["ended_at"] = self._iso_now()
+                    self._save_run_history(daily_folder, history)
                     raise
 
             # ── 检查是否包含 audit 步骤且审核未通过 ──────────────────────────
             audit_output = results.get("audit")
             if audit_output is None or audit_output.success:
                 # 没有跑 audit 或者 audit 通过，正常结束
+                attempt_record["audit_passed"] = True
+                attempt_record["ended_at"] = self._iso_now()
+                self._save_run_history(daily_folder, history)
                 break
+            attempt_record["audit_passed"] = False
+            attempt_record["failed_items"] = list(audit_output.data.get("summary_failed", []))
 
             # ── Audit 未通过 → 运行 ReviserAgent ────────────────────────────
             log.warning("⚠️ 审核未通过，调用 ReviserAgent 分析问题...")
@@ -233,19 +266,31 @@ class Pipeline:
                 product_name=self.product_name,
                 prd_path=prd_path,
                 user_note=effective_user_note,
-                extra={"retry_count": retry_count},
+                extra={"retry_count": retry_count, "attempt_id": attempt_id},
             )
             reviser_output = await self._reviser.run(reviser_context)
             results["reviser"] = reviser_output
             log.info(f"📋 Reviser：{reviser_output.summary}")
+            attempt_record["reviser"] = {
+                "success": reviser_output.success,
+                "summary": reviser_output.summary,
+                "route_to": reviser_output.data.get("route_to"),
+                "revision_instructions": reviser_output.data.get("revision_instructions", ""),
+                "artifacts": list(reviser_output.data.get("attempt_artifacts", [])),
+                "requires_human_review": bool(reviser_output.data.get("requires_human_review")),
+            }
 
             # ── 检查是否需要人工介入 ─────────────────────────────────────────
             if reviser_output.data.get("requires_human_review"):
                 log.error("🛑 超出最大重试次数，需要人工介入。流程终止。")
+                attempt_record["ended_at"] = self._iso_now()
+                self._save_run_history(daily_folder, history)
                 break
 
             if not reviser_output.success or not reviser_output.data.get("route_to"):
                 log.warning("⚠️ ReviserAgent 未返回有效路由，流程终止。")
+                attempt_record["ended_at"] = self._iso_now()
+                self._save_run_history(daily_folder, history)
                 break
 
             # ── 准备重跑 ─────────────────────────────────────────────────────
@@ -282,6 +327,9 @@ class Pipeline:
             route_idx = STEPS.index(route_to)
             audit_idx = STEPS.index("audit") + 1
             steps_to_run = STEPS[route_idx:audit_idx]
+            attempt_record["ended_at"] = self._iso_now()
+            self._save_run_history(daily_folder, history)
+            attempt_seq += 1
 
         return results
 
@@ -313,6 +361,31 @@ class Pipeline:
             json.dumps(state, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+    @staticmethod
+    def _history_path(daily_folder: Path) -> Path:
+        return daily_folder / ".run_history.json"
+
+    def _load_run_history(self, daily_folder: Path) -> dict:
+        p = self._history_path(daily_folder)
+        if p.exists():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and isinstance(data.get("attempts"), list):
+                    return data
+            except (json.JSONDecodeError, OSError):
+                pass
+        return {"attempts": []}
+
+    def _save_run_history(self, daily_folder: Path, data: dict) -> None:
+        self._history_path(daily_folder).write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _iso_now() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     @staticmethod
     def _print_dry_run(context: AgentContext, steps: list[str]) -> None:

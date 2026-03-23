@@ -89,6 +89,7 @@ class PlannerAgent(BaseAgent):
     async def run(self, context: AgentContext) -> AgentOutput:
         output_path = context.subdir("plan") / "daily_marketing_plan.md"
         log_path = context.subdir("plan") / "debate_raw.md"
+        attempt_dir = context.stage_attempt_dir("plan")
 
         # ── 读取上下文资料 ────────────────────────────────────────────────────
         prd_text = self._read_optional(context.prd_path)
@@ -132,6 +133,8 @@ class PlannerAgent(BaseAgent):
 
         # ── 写入输出文件 ──────────────────────────────────────────────────────
         self._write_output(output_path, result.final_output)
+        self._copy_attempt_file(output_path, attempt_dir / "daily_marketing_plan.md")
+        self._copy_attempt_file(log_path, attempt_dir / "debate_raw.md")
 
         # 提取今日主题作为摘要
         summary = self._extract_theme(result.final_output, date_str)
@@ -146,7 +149,14 @@ class PlannerAgent(BaseAgent):
         return AgentOutput(
             output_path=output_path,
             summary=summary,
-            data={"rounds": result.rounds, "agreement": reached_agreement},
+            data={
+                "rounds": result.rounds,
+                "agreement": reached_agreement,
+                "attempt_artifacts": [
+                    str(attempt_dir / "daily_marketing_plan.md"),
+                    str(attempt_dir / "debate_raw.md"),
+                ],
+            },
         )
 
     # ── 私有方法 ──────────────────────────────────────────────────────────────

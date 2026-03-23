@@ -68,6 +68,33 @@
           </div>
         </div>
 
+        <div v-if="runHistoryAttempts.length" class="bg-white rounded-xl shadow-sm border border-gray-200 mb-5 p-4">
+          <h3 class="font-semibold text-gray-800 mb-3">执行历史（完整 attempt）</h3>
+          <div class="space-y-3">
+            <div v-for="a in runHistoryAttempts" :key="a.attempt_id" class="border border-gray-200 rounded-lg p-3">
+              <div class="flex flex-wrap items-center gap-2 text-sm mb-2">
+                <span class="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">{{ a.attempt_id }}</span>
+                <span class="text-gray-600">retry={{ a.retry_count ?? 0 }}</span>
+                <span class="text-gray-600" v-if="a.started_at">{{ a.started_at }}</span>
+                <span class="text-gray-400" v-if="a.ended_at">→ {{ a.ended_at }}</span>
+                <span class="text-red-700" v-if="a.reviser?.route_to">route_to={{ a.reviser.route_to }}</span>
+              </div>
+              <div class="text-xs text-gray-700 space-y-1">
+                <div v-for="s in a.steps || []" :key="`${a.attempt_id}-${s.step}`">
+                  <span>{{ s.success ? '✅' : '❌' }} {{ s.step }}</span>
+                  <span class="text-gray-500"> - {{ s.summary || s.error || '' }}</span>
+                </div>
+              </div>
+              <div v-if="a.failed_items && a.failed_items.length" class="text-xs text-red-700 mt-2">
+                失败条目：{{ a.failed_items.join(', ') }}
+              </div>
+              <div v-if="a.reviser?.revision_instructions" class="text-xs text-amber-800 mt-2 whitespace-pre-wrap">
+                修订指令：{{ a.reviser.revision_instructions }}
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Items table -->
         <div class="bg-white rounded-xl shadow-sm border border-gray-200">
           <div class="px-5 py-4 border-b border-gray-100">
@@ -157,6 +184,7 @@ const date = computed(() => route.params.date || '')
 const audit = ref(null)
 const revisionPlan = ref(null)
 const stateData = ref(null)
+const runHistory = ref(null)
 const loading = ref(true)
 const loadError = ref(null)
 const silentRefreshing = ref(false)
@@ -202,6 +230,12 @@ const revisionAttempts = computed(() => {
   if (!revisionPlan.value) return []
   if (Array.isArray(revisionPlan.value)) return revisionPlan.value
   return []
+})
+
+const runHistoryAttempts = computed(() => {
+  const arr = runHistory.value?.attempts
+  if (!Array.isArray(arr)) return []
+  return arr
 })
 
 function categoryClass(cat) {
@@ -272,11 +306,23 @@ async function load(opts = {}) {
       } catch {
         revisionPlan.value = null
       }
+      try {
+        const h = await getFile(product.value, date.value, '.run_history.json')
+        runHistory.value = JSON.parse(h.content)
+      } catch {
+        runHistory.value = null
+      }
       return
     }
 
     audit.value = null
     revisionPlan.value = null
+    try {
+      const h = await getFile(product.value, date.value, '.run_history.json')
+      runHistory.value = JSON.parse(h.content)
+    } catch {
+      runHistory.value = null
+    }
 
     const st = stateData.value
     if (st.audit?.done === true) {

@@ -101,6 +101,7 @@ class StrategistAgent(BaseAgent):
 
     async def run(self, context: AgentContext) -> AgentOutput:
         output_path = context.strategy_path
+        attempt_dir = context.stage_attempt_dir("strategy")
         date_str = context.run_date.strftime("%Y-%m-%d")
 
         # ── 读取输入 ──────────────────────────────────────────────────────────
@@ -154,6 +155,8 @@ class StrategistAgent(BaseAgent):
         self._write_output(output_path, result.final_output)
         # Mirror at campaign root for a stable "latest strategy" path
         self._write_output(context.strategy_latest_mirror_path, result.final_output)
+        self._copy_attempt_file(output_path, attempt_dir / "strategy_suggestion.md")
+        self._copy_attempt_file(log_path, attempt_dir / "strategy_debate.md")
 
         summary = f"{start_mode} | 策略建议已生成（{len(result.final_output)} 字）"
         return AgentOutput(
@@ -163,6 +166,10 @@ class StrategistAgent(BaseAgent):
                 "start_mode": start_mode,
                 "is_cold_start": is_cold_start,
                 "rounds": result.rounds,
+                "attempt_artifacts": [
+                    str(attempt_dir / "strategy_suggestion.md"),
+                    str(attempt_dir / "strategy_debate.md"),
+                ],
             },
         )
 

@@ -57,6 +57,7 @@ class ReviserAgent(BaseAgent):
     async def run(self, context: AgentContext) -> AgentOutput:
         date_str = context.run_date.strftime("%Y-%m-%d")
         audit_dir = context.subdir("audit")
+        attempt_dir = context.stage_attempt_dir("audit")
         audit_result_path = audit_dir / "audit_result.json"
         revision_plan_path = audit_dir / "revision_plan.json"
         human_review_path = audit_dir / "human_review_required.json"
@@ -109,6 +110,7 @@ class ReviserAgent(BaseAgent):
                 ),
             }
             self._write_json(human_review_path, payload)
+            self._copy_attempt_file(human_review_path, attempt_dir / "human_review_required.json")
             summary = (
                 f"🛑 已重试 {retry_count} 次，超出上限。"
                 f"已写入 human_review_required.json，等待人工介入。"
@@ -139,6 +141,7 @@ class ReviserAgent(BaseAgent):
             "revision_instructions": revision_instructions,
         }
         self._write_json(revision_plan_path, payload)
+        self._copy_attempt_file(revision_plan_path, attempt_dir / "revision_plan.json")
 
         summary = (
             f"📋 修订计划已生成：路由到 {route_to}，"
@@ -153,6 +156,7 @@ class ReviserAgent(BaseAgent):
                 "retry_count": new_retry_count,
                 "revision_instructions": revision_instructions,
                 "requires_human_review": False,
+                "attempt_artifacts": [str(attempt_dir / "revision_plan.json")],
             },
         )
 

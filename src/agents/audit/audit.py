@@ -157,6 +157,7 @@ class AuditAgent(BaseAgent):
     async def run(self, context: AgentContext) -> AgentOutput:
         date_str = context.run_date.strftime("%Y-%m-%d")
         audit_dir = context.subdir("audit")
+        attempt_dir = context.stage_attempt_dir("audit")
         result_path = audit_dir / "audit_result.json"
         raw_log_path = audit_dir / "audit_raw.md"
         final_dir = context.subdir("output", "final")
@@ -200,15 +201,18 @@ class AuditAgent(BaseAgent):
         )
         audit_result = {
             "date": date_str,
+            "attempt_id": context.attempt_id,
             "passed": overall_passed,
             "items": item_results,
             "visual_items": visual_results,
             "summary_failed": all_failed,
         }
         self._write_json(result_path, audit_result)
+        self._copy_attempt_file(result_path, attempt_dir / "audit_result.json")
 
         # ── 写入原始日志 ──────────────────────────────────────────────────────
         self._write_raw_log(raw_log_path, votes_list, audit_input, date_str)
+        self._copy_attempt_file(raw_log_path, attempt_dir / "audit_raw.md")
 
         # ── 通过则拷贝到 final/ ───────────────────────────────────────────────
         if overall_passed and creator_dir.exists():
@@ -236,7 +240,13 @@ class AuditAgent(BaseAgent):
             summary=status,
             success=overall_passed,
             error="" if overall_passed else f"未通过条目：{', '.join(audit_result['summary_failed'])}",
-            data=audit_result,
+            data={
+                **audit_result,
+                "attempt_artifacts": [
+                    str(attempt_dir / "audit_result.json"),
+                    str(attempt_dir / "audit_raw.md"),
+                ],
+            },
         )
 
     async def _single_audit(self, audit_input: str) -> list[dict]:

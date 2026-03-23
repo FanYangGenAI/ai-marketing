@@ -72,6 +72,7 @@ class CreatorAgent(BaseAgent):
     async def run(self, context: AgentContext) -> AgentOutput:
         date_str = context.run_date.strftime("%Y-%m-%d")
         creator_dir = context.subdir("creator")
+        attempt_dir = context.stage_attempt_dir("creator")
         raw_path = creator_dir / "creator_raw.md"
         package_path = creator_dir / "post_package.json"
         content_path = creator_dir / "post_content.md"
@@ -143,6 +144,10 @@ class CreatorAgent(BaseAgent):
 
         readable = self._package_to_markdown(package, date_str)
         self._write_output(content_path, readable)
+        self._copy_attempt_file(raw_path, attempt_dir / "creator_raw.md")
+        self._copy_attempt_file(package_path, attempt_dir / "post_package.json")
+        self._copy_attempt_file(content_path, attempt_dir / "post_content.md")
+        self._copy_attempt_file(validation_path, attempt_dir / "copy_validation.json")
 
         ready = package.get("ready_for_audit", False)
         summary = f"发布包已组装，标题：{package.get('title', '未知')}，审核就绪：{ready}"
@@ -150,7 +155,16 @@ class CreatorAgent(BaseAgent):
         return AgentOutput(
             output_path=package_path,
             summary=summary,
-            data={"package": package, "ready_for_audit": ready},
+            data={
+                "package": package,
+                "ready_for_audit": ready,
+                "attempt_artifacts": [
+                    str(attempt_dir / "creator_raw.md"),
+                    str(attempt_dir / "post_package.json"),
+                    str(attempt_dir / "post_content.md"),
+                    str(attempt_dir / "copy_validation.json"),
+                ],
+            },
         )
 
     @staticmethod
