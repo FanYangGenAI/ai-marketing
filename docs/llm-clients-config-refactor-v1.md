@@ -116,3 +116,4 @@
 | 日期 | 说明 |
 |------|------|
 | 2026-03-24 | 初版：按角色建 client、无三全局变量；Reviser 0～0.3；温度与文件清单 |
+| 2026-03-24 | 已实现：`src/llm/client_factory.py`、`llm_temperatures.py`、debate 透传、三 debate Agent 独立 moderator、pipeline 按 cfg 组装、配置项 `moderator` |

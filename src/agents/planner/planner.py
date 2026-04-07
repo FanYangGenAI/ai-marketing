@@ -2,10 +2,8 @@
 Planner Agent — 每日营销策划团队。
 
 角色构成（Debate→Synthesize）：
-  PlannerA  (Gemini)        ：热点搜索 + 趋势分析
-  PlannerB  (Claude Opus)   ：产品亮点深挖
-  PlannerC  (GPT-4o)        ：用户视角洞察
-  Moderator (Claude Opus)   ：综合收敛，输出计划书
+  PlannerA / B / C：模型见 llm_config planner_a、b、c
+  Moderator：见 moderator 或 planner_moderator
 
 输出：{daily_folder}/plan/daily_marketing_plan.md
 """
@@ -18,6 +16,7 @@ from src.agents.base import AgentContext, AgentOutput, BaseAgent
 from src.agents.planner.campaign_memory import CampaignMemory
 from src.llm.base import BaseLLMClient, LLMMessage
 from src.orchestrator.debate import DebateAgent, debate_and_synthesize
+from src.orchestrator.llm_temperatures import DEBATE_STRATEGIST_PLANNER
 from src.orchestrator.platform_adapter import PlatformAdapter
 
 
@@ -70,19 +69,20 @@ class PlannerAgent(BaseAgent):
 
     def __init__(
         self,
-        gemini_client: BaseLLMClient,    # PlannerA
-        claude_client: BaseLLMClient,    # PlannerB + Moderator
-        openai_client: BaseLLMClient,    # PlannerC
+        planner_a_client: BaseLLMClient,
+        planner_b_client: BaseLLMClient,
+        planner_c_client: BaseLLMClient,
+        moderator_client: BaseLLMClient,
         platform: str = "xiaohongshu",
     ):
-        # 基类 llm_client 设为 Moderator（Claude）
         super().__init__(
             name="Planner",
-            llm_client=claude_client,
+            llm_client=moderator_client,
             role_description="每日营销策划团队，通过多角色讨论制定内容方向",
         )
-        self._gemini = gemini_client
-        self._openai = openai_client
+        self._planner_a = planner_a_client
+        self._planner_b = planner_b_client
+        self._planner_c = planner_c_client
         self._memory = CampaignMemory
         self._platform_adapter = PlatformAdapter(platform)
 
@@ -106,17 +106,17 @@ class PlannerAgent(BaseAgent):
         planner_a = DebateAgent(
             name="PlannerA（趋势分析）",
             role_description=_PLANNER_A_SYSTEM,
-            client=self._gemini,
+            client=self._planner_a,
         )
         planner_b = DebateAgent(
             name="PlannerB（产品视角）",
             role_description=_PLANNER_B_SYSTEM,
-            client=self.llm_client,
+            client=self._planner_b,
         )
         planner_c = DebateAgent(
             name="PlannerC（用户视角）",
             role_description=_PLANNER_C_SYSTEM,
-            client=self._openai,
+            client=self._planner_c,
         )
 
         moderator_system = _MODERATOR_SYSTEM.replace("{date}", date_str)
@@ -129,6 +129,7 @@ class PlannerAgent(BaseAgent):
             moderator_system=moderator_system,
             max_rounds=3,
             log_path=log_path,
+            temperature=DEBATE_STRATEGIST_PLANNER,
         )
 
         # ── 写入输出文件 ──────────────────────────────────────────────────────

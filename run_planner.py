@@ -42,20 +42,23 @@ async def main() -> None:
     parser.add_argument("--note", default="")
     args = parser.parse_args()
 
-    from src.llm.claude_client import ClaudeClient
-    from src.llm.gemini_client import GeminiClient
-    from src.llm.openai_client import OpenAIClient
+    import json
+
     from src.agents.planner.planner import PlannerAgent
     from src.agents.base import AgentContext
+    from src.llm.client_factory import build_llm_client, resolve_moderator_model
 
-    log.info("初始化 LLM 客户端...")
-    gemini = GeminiClient()
-    claude = ClaudeClient()
-    openai_ = OpenAIClient()
-    log.info(f"  PlannerA → {gemini.model_name()}")
-    log.info(f"  PlannerB → {claude.model_name()}")
-    log.info(f"  PlannerC → {openai_.model_name()}")
-    log.info(f"  Moderator → {claude.model_name()}")
+    cfg_path = Path(__file__).parent / "src" / "config" / "llm_config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+    log.info("初始化 LLM 客户端（llm_config.json）...")
+    pa = build_llm_client(cfg.get("planner_a", "gemini-2.5-flash"))
+    pb = build_llm_client(cfg.get("planner_b", "gemini-2.5-flash"))
+    pc = build_llm_client(cfg.get("planner_c", "gpt-5-nano"))
+    mod = build_llm_client(resolve_moderator_model(cfg, "planner"))
+    log.info(f"  PlannerA → {pa.model_name()}")
+    log.info(f"  PlannerB → {pb.model_name()}")
+    log.info(f"  PlannerC → {pc.model_name()}")
+    log.info(f"  Moderator → {mod.model_name()}")
 
     product = args.product
     prd_path = Path(args.prd)
@@ -79,7 +82,12 @@ async def main() -> None:
     log.info(f"输出目录={daily_folder}")
     log.info(f"{'='*60}\n")
 
-    agent = PlannerAgent(gemini_client=gemini, claude_client=claude, openai_client=openai_)
+    agent = PlannerAgent(
+        planner_a_client=pa,
+        planner_b_client=pb,
+        planner_c_client=pc,
+        moderator_client=mod,
+    )
     output = await agent.run(context)
 
     # ── 打印成果物 ────────────────────────────────────────────────────────────

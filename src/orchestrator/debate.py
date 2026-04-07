@@ -56,16 +56,18 @@ async def debate_and_synthesize(
     moderator_system: str = "",
     max_rounds: int = MAX_ROUNDS,
     log_path: Path | None = None,
+    temperature: float = 0.7,
 ) -> DebateResult:
     """
     执行多 agent 辩论并由 Moderator 收敛输出。
 
     Args:
         agents:           参与辩论的 agent 列表（非 Moderator）
-        moderator_client: Moderator 使用的 LLM 客户端（通常为 Claude Opus）
+        moderator_client: Moderator 使用的 LLM 客户端
         context:          辩论的背景信息和任务描述
         moderator_system: Moderator 的 system prompt
         max_rounds:       最大讨论轮数
+        temperature:      Passed to all debater and moderator chat() calls
 
     Returns:
         DebateResult
@@ -79,14 +81,16 @@ async def debate_and_synthesize(
         if round_num == 1:
             # Round 1: 各 agent 独立基于 context 发言
             tasks = [
-                _agent_speak_round1(agent, context)
+                _agent_speak_round1(agent, context, temperature=temperature)
                 for agent in agents
             ]
         else:
             # Round 2+: 各 agent 基于其他人的观点进行点评
             prev_opinions = all_round_opinions[-1]
             tasks = [
-                _agent_speak_round2(agent, context, prev_opinions, current_summary)
+                _agent_speak_round2(
+                    agent, context, prev_opinions, current_summary, temperature=temperature
+                )
                 for agent in agents
             ]
 
@@ -109,7 +113,11 @@ async def debate_and_synthesize(
         # Round 1 后：让 Moderator 判断是否需要继续讨论
         if round_num == 1 and max_rounds > 1:
             should_continue = await _moderator_should_continue(
-                moderator_client, context, list(opinions), log_path=log_path
+                moderator_client,
+                context,
+                list(opinions),
+                log_path=log_path,
+                temperature=temperature,
             )
             if not should_continue:
                 logger.info("[Debate] Moderator: opinions convergent after Round 1, skipping further rounds.")
@@ -135,6 +143,7 @@ async def debate_and_synthesize(
         all_round_opinions,
         moderator_system,
         log_path=log_path,
+        temperature=temperature,
     )
 
     return DebateResult(
@@ -146,7 +155,9 @@ async def debate_and_synthesize(
 
 # ── 内部辅助函数 ──────────────────────────────────────────────────────────────
 
-async def _agent_speak_round1(agent: DebateAgent, context: str) -> AgentOpinion:
+async def _agent_speak_round1(
+    agent: DebateAgent, context: str, *, temperature: float
+) -> AgentOpinion:
     """Round 1：agent 基于 context 独立发表观点。"""
     system = (
         f"你是{agent.role_description}。\n"
@@ -156,6 +167,7 @@ async def _agent_speak_round1(agent: DebateAgent, context: str) -> AgentOpinion:
     response = await agent.client.chat(
         messages=[LLMMessage(role="user", content=context)],
         system=system,
+        temperature=temperature,
     )
     return AgentOpinion(
         agent_name=agent.name,
@@ -169,6 +181,8 @@ async def _agent_speak_round2(
     context: str,
     prev_opinions: list[AgentOpinion],
     current_summary: str,
+    *,
+    temperature: float,
 ) -> AgentOpinion:
     """Round 2+：agent 点评其他人的观点，并说明是否同意当前方向。"""
     others = [op for op in prev_opinions if op.agent_name != agent.name]
@@ -189,6 +203,7 @@ async def _agent_speak_round2(
         messages=[LLMMessage(role="user", content=user_msg)],
         system=system,
         max_tokens=8192,  # thinking 模式下需要足够预算，确保末尾"同意/不同意"不被截断
+        temperature=temperature,
     )
     agree = response.content.strip().endswith("同意")
     return AgentOpinion(
@@ -205,6 +220,8 @@ async def _moderator_synthesize(
     all_opinions: list[list[AgentOpinion]],
     system: str,
     log_path: Path | None = None,
+    *,
+    temperature: float,
 ) -> str:
     """Moderator 综合所有轮次发言，输出最终结论。"""
     opinions_text = ""
@@ -230,6 +247,7 @@ async def _moderator_synthesize(
         messages=[LLMMessage(role="user", content=user_msg)],
         system=system or default_system,
         max_tokens=8192,
+        temperature=temperature,
     )
     logger.debug(
         "\n%s\n[Moderator 输出]\n%s\n%s",
@@ -253,6 +271,8 @@ async def _moderator_should_continue(
     context: str,
     opinions: list[AgentOpinion],
     log_path: Path | None = None,
+    *,
+    temperature: float,
 ) -> bool:
     """Round 1 后，让 Moderator 快速判断是否需要继续讨论。"""
     opinions_text = "\n\n".join(
@@ -268,6 +288,7 @@ async def _moderator_should_continue(
         messages=[LLMMessage(role="user", content=user_msg)],
         system=system,
         max_tokens=1024,  # thinking 模式需要足够 token 预算，实际回复只有 2 字
+        temperature=temperature,
     )
     decision = response.content.strip()
     if not decision:

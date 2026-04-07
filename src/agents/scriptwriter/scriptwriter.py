@@ -2,10 +2,8 @@
 Scriptwriter Agent — 文案创作团队。
 
 角色构成（Debate→Synthesize）：
-  ScriptwriterA (GPT-4o)     ：叙事结构设计（故事线、钩子、节奏）
-  ScriptwriterB (Gemini)     ：视觉指令描述（配图方向、画面感）
-  ScriptwriterC (GPT-4o)     ：小红书口语化文案（标题、正文、话题标签）
-  Moderator     (Claude Opus)：综合收敛，输出可执行脚本
+  ScriptwriterA/B/C：模型见 llm_config scriptwriter_a、b、c
+  Moderator：moderator 或 scriptwriter_moderator
 
 输出：{daily_folder}/script/daily_marketing_script.md
 """
@@ -15,6 +13,7 @@ from __future__ import annotations
 from src.agents.base import AgentContext, AgentOutput, BaseAgent
 from src.llm.base import BaseLLMClient
 from src.orchestrator.debate import DebateAgent, debate_and_synthesize
+from src.orchestrator.llm_temperatures import CREATIVE_SCRIPT_DIRECTOR_CREATOR
 from src.orchestrator.platform_adapter import PlatformAdapter
 
 
@@ -92,18 +91,20 @@ class ScriptwriterAgent(BaseAgent):
 
     def __init__(
         self,
-        openai_client: BaseLLMClient,    # ScriptwriterA + ScriptwriterC
-        gemini_client: BaseLLMClient,    # ScriptwriterB
-        claude_client: BaseLLMClient,    # Moderator
+        scriptwriter_a_client: BaseLLMClient,
+        scriptwriter_b_client: BaseLLMClient,
+        scriptwriter_c_client: BaseLLMClient,
+        moderator_client: BaseLLMClient,
         platform: str = "xiaohongshu",
     ):
         super().__init__(
             name="Scriptwriter",
-            llm_client=claude_client,
+            llm_client=moderator_client,
             role_description="文案创作团队，输出完整的营销脚本和配图指令",
         )
-        self._openai = openai_client
-        self._gemini = gemini_client
+        self._sw_a = scriptwriter_a_client
+        self._sw_b = scriptwriter_b_client
+        self._sw_c = scriptwriter_c_client
         self._platform_adapter = PlatformAdapter(platform)
 
     async def run(self, context: AgentContext) -> AgentOutput:
@@ -126,9 +127,9 @@ class ScriptwriterAgent(BaseAgent):
         ]))
 
         # ── Debate Agents ─────────────────────────────────────────────────────
-        sw_a = DebateAgent("ScriptwriterA（叙事）", _SW_A_SYSTEM, self._openai)
-        sw_b = DebateAgent("ScriptwriterB（视觉）", _SW_B_SYSTEM, self._gemini)
-        sw_c = DebateAgent("ScriptwriterC（文案）", _SW_C_SYSTEM, self._openai)
+        sw_a = DebateAgent("ScriptwriterA（叙事）", _SW_A_SYSTEM, self._sw_a)
+        sw_b = DebateAgent("ScriptwriterB（视觉）", _SW_B_SYSTEM, self._sw_b)
+        sw_c = DebateAgent("ScriptwriterC（文案）", _SW_C_SYSTEM, self._sw_c)
 
         moderator_system = _MODERATOR_SYSTEM.replace("{date}", date_str)
 
@@ -150,6 +151,7 @@ class ScriptwriterAgent(BaseAgent):
             moderator_system=moderator_system,
             max_rounds=3,
             log_path=log_path,
+            temperature=CREATIVE_SCRIPT_DIRECTOR_CREATOR,
         )
 
         self._write_output(output_path, result.final_output)

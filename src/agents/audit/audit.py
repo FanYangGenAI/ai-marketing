@@ -24,6 +24,7 @@ import logging
 
 from src.agents.base import AgentContext, AgentOutput, BaseAgent
 from src.llm.base import BaseLLMClient, LLMMessage
+from src.orchestrator.llm_temperatures import AUDIT
 from src.orchestrator.platform_adapter import PlatformAdapter
 
 logger = logging.getLogger(__name__)
@@ -137,12 +138,12 @@ _AUDITOR_SYSTEM = """你是一名严格的内容审核员。
 class AuditAgent(BaseAgent):
     def __init__(
         self,
-        gemini_client: BaseLLMClient,
+        llm_client: BaseLLMClient,
         platform: str = "xiaohongshu",
     ):
         super().__init__(
             name="Audit",
-            llm_client=gemini_client,
+            llm_client=llm_client,
             role_description="共享清单 × 3 Gemini 并行投票审核",
         )
         self._platform_adapter = PlatformAdapter(platform)
@@ -265,7 +266,7 @@ class AuditAgent(BaseAgent):
                 response_schema=_AUDIT_RESPONSE_SCHEMA,
                 system=_AUDITOR_SYSTEM,
                 max_tokens=8192,
-                temperature=0.1,
+                temperature=AUDIT,
             )
             # 确保结果是 list，且每项都有必要字段
             if not isinstance(result, list):
@@ -332,6 +333,7 @@ class AuditAgent(BaseAgent):
                 response_schema=_SINGLE_VISUAL_AUDIT_SCHEMA,
                 system=_VISUAL_AUDITOR_SYSTEM,
                 max_tokens=8192,
+                temperature=AUDIT,
             )
             if isinstance(result, dict) and "per_image" in result and "holistic" in result:
                 return result

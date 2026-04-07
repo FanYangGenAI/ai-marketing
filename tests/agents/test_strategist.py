@@ -60,9 +60,9 @@ async def test_strategist_cold_start_writes_strategy_file(campaign_root, context
 
     mock_client = MockLLMClient("# 策略建议 - 2026-03-22\n\n## 产品定位\n测试内容")
     agent = StrategistAgent(
-        gemini_client=mock_client,
-        openai_client=mock_client,
-        claude_client=mock_client,
+        analyst_client=mock_client,
+        reviewer_client=mock_client,
+        moderator_client=mock_client,
         platform="xiaohongshu",
     )
 
@@ -109,9 +109,9 @@ async def test_strategist_hot_start_detected(campaign_root, context):
 
     mock_client = MockLLMClient("# 策略建议 - 2026-03-22\n热启动策略")
     agent = StrategistAgent(
-        gemini_client=mock_client,
-        openai_client=mock_client,
-        claude_client=mock_client,
+        analyst_client=mock_client,
+        reviewer_client=mock_client,
+        moderator_client=mock_client,
     )
 
     output = await agent.run(context)
@@ -141,9 +141,9 @@ async def test_strategist_reads_user_brief_from_context(campaign_root, context):
 
     client = CapturingClient()
     agent = StrategistAgent(
-        gemini_client=client,
-        openai_client=client,
-        claude_client=client,
+        analyst_client=client,
+        reviewer_client=client,
+        moderator_client=client,
     )
 
     await agent.run(context)
@@ -160,9 +160,9 @@ async def test_strategist_writes_debate_log(campaign_root, context):
 
     mock_client = MockLLMClient("策略内容")
     agent = StrategistAgent(
-        gemini_client=mock_client,
-        openai_client=mock_client,
-        claude_client=mock_client,
+        analyst_client=mock_client,
+        reviewer_client=mock_client,
+        moderator_client=mock_client,
     )
 
     await agent.run(context)

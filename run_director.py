@@ -38,12 +38,17 @@ async def main() -> None:
     parser.add_argument("--product", default="原语")
     args = parser.parse_args()
 
-    from src.llm.gemini_client import GeminiClient
+    import json
+
     from src.agents.director.director import DirectorAgent
     from src.agents.base import AgentContext
+    from src.llm.client_factory import build_llm_client
 
-    log.info("初始化 Gemini 客户端...")
-    gemini = GeminiClient()
+    cfg_path = Path(__file__).parent / "src" / "config" / "llm_config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+    director_model = cfg.get("director", "gemini-2.5-flash")
+    log.info("初始化 Director LLM（%s）...", director_model)
+    llm = build_llm_client(director_model)
 
     product = args.product
     run_date = date.today()
@@ -63,7 +68,7 @@ async def main() -> None:
     log.info(f"输出目录={daily_folder}")
     log.info(f"{'='*60}\n")
 
-    agent = DirectorAgent(gemini_client=gemini)
+    agent = DirectorAgent(llm_client=llm)
     output = await agent.run(context)
 
     print(f"\n{'='*60}")

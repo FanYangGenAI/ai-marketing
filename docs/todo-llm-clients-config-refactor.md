@@ -47,6 +47,17 @@
 
 | 项目 | 结果 |
 |------|------|
-| 完成日期 | |
-| 主要提交 / 分支 | |
-| 备注 | |
+| 完成日期 | 2026-03-24 |
+| 主要提交 / 分支 | develop/develop-cold-start |
+| 备注 | 已实现 factory、debate 温度、独立 moderator、pipeline 按角色 build、Director/Creator/Audit/Reviser 温度常量；`llm_config.json` 增加顶层 `moderator` |
+
+---
+
+## Phase 勾选（2026-03-24 实现）
+
+- [x] Phase 1 — `client_factory.py` + `resolve_moderator_model` + 缓存
+- [x] Phase 2 — `debate.py` temperature 透传；Strategist/Planner 0、Scriptwriter 0.7
+- [x] Phase 3 — 三 Agent 独立 `moderator_client` 构造参数
+- [x] Phase 4 — `pipeline._init_agents` 按 cfg 键 `build_llm_client`
+- [x] Phase 5 — Director/Creator 0.7、Audit 0、Reviser 0.2（`llm_temperatures.py`）
+- [x] Phase 7 — `tests/llm/test_client_factory.py` + strategist 测试更新；全量 pytest（除 `test_chat_structured_minimal`）94 passed

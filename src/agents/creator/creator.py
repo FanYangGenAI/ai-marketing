@@ -5,7 +5,7 @@ Creator Agent — 物料组装团队。
   读取 daily_marketing_script.md + director/director_task_result.json + 平台规范，
   将文案和素材路径组装为「平台发布包」结构文件。
 
-模型：Claude Opus（指令执行精准，组装逻辑清晰）
+模型：见 llm_config.json creator（默认 Gemini）
 输出：
   - {daily_folder}/creator/creator_raw.md          — LLM 原始响应日志
   - {daily_folder}/creator/post_package.json        — 发布包结构（JSON）
@@ -20,6 +20,7 @@ from pathlib import Path
 from src.agents.base import AgentContext, AgentOutput, BaseAgent
 from src.llm.base import BaseLLMClient, LLMMessage
 from src.orchestrator.content_validator import enforce_platform_copy
+from src.orchestrator.llm_temperatures import CREATIVE_SCRIPT_DIRECTOR_CREATOR
 from src.orchestrator.platform_adapter import PlatformAdapter
 
 
@@ -61,10 +62,10 @@ _CREATOR_SYSTEM = """你是一名内容发布打包专员（Creator）。
 
 
 class CreatorAgent(BaseAgent):
-    def __init__(self, claude_client: BaseLLMClient, platform: str = "xiaohongshu"):
+    def __init__(self, llm_client: BaseLLMClient, platform: str = "xiaohongshu"):
         super().__init__(
             name="Creator",
-            llm_client=claude_client,
+            llm_client=llm_client,
             role_description="物料组装，将文案和素材整合为平台发布包",
         )
         self._platform_adapter = PlatformAdapter(platform)
@@ -104,7 +105,7 @@ class CreatorAgent(BaseAgent):
             messages=messages,
             system=_CREATOR_SYSTEM,
             max_tokens=4096,
-            temperature=0.2,
+            temperature=CREATIVE_SCRIPT_DIRECTOR_CREATOR,
         )
 
         # ── 保存原始输出 ──────────────────────────────────────────────────────

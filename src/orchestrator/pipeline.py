@@ -56,8 +56,7 @@ class Pipeline:
         """首次运行时延迟初始化所有 LLM 客户端和 Agent。"""
         if self._agents_initialized:
             return
-        from src.llm.gemini_client import GeminiClient
-        from src.llm.openai_client import OpenAIClient
+        from src.llm.client_factory import build_llm_client, resolve_moderator_model
         from src.agents.audit.audit import AuditAgent
         from src.agents.creator.creator import CreatorAgent
         from src.agents.director.director import DirectorAgent
@@ -66,28 +65,45 @@ class Pipeline:
         from src.agents.scriptwriter.scriptwriter import ScriptwriterAgent
         from src.agents.strategist.strategist import StrategistAgent
 
-        # 从 llm_config.json 读取模型配置
         cfg = self._load_llm_config()
+        b = build_llm_client
 
-        self._openai = OpenAIClient(model=cfg.get("planner_c", "gpt-5-nano"))
-        self._gemini = GeminiClient(model=cfg.get("planner_a", "gemini-2.5-flash"))
-        self._claude = GeminiClient(model=cfg.get("planner_b", "gemini-2.5-flash"))
-
-        # Gemini for auditor（可配置为不同模型）
-        auditor_model = cfg.get("auditor", "gemini-2.5-flash")
-        self._gemini_auditor = (
-            self._gemini
-            if auditor_model == cfg.get("planner_a", "gemini-2.5-flash")
-            else GeminiClient(model=auditor_model)
+        self._strategist = StrategistAgent(
+            analyst_client=b(cfg.get("strategy_analyst", "gemini-2.5-flash")),
+            reviewer_client=b(cfg.get("strategy_reviewer", "gpt-5-nano")),
+            moderator_client=b(resolve_moderator_model(cfg, "strategy")),
+            platform=self.platform,
         )
-
-        self._strategist = StrategistAgent(self._gemini, self._openai, self._claude, self.platform)
-        self._planner = PlannerAgent(self._gemini, self._claude, self._openai, self.platform)
-        self._scriptwriter = ScriptwriterAgent(self._openai, self._gemini, self._claude, self.platform)
-        self._director = DirectorAgent(self._gemini, self.platform)
-        self._creator = CreatorAgent(self._claude, self.platform)
-        self._audit = AuditAgent(self._gemini_auditor, self.platform)
-        self._reviser = ReviserAgent(self._gemini_auditor, self.platform)
+        self._planner = PlannerAgent(
+            planner_a_client=b(cfg.get("planner_a", "gemini-2.5-flash")),
+            planner_b_client=b(cfg.get("planner_b", "gemini-2.5-flash")),
+            planner_c_client=b(cfg.get("planner_c", "gpt-5-nano")),
+            moderator_client=b(resolve_moderator_model(cfg, "planner")),
+            platform=self.platform,
+        )
+        self._scriptwriter = ScriptwriterAgent(
+            scriptwriter_a_client=b(cfg.get("scriptwriter_a", "gpt-5-nano")),
+            scriptwriter_b_client=b(cfg.get("scriptwriter_b", "gemini-2.5-flash")),
+            scriptwriter_c_client=b(cfg.get("scriptwriter_c", "gpt-5-nano")),
+            moderator_client=b(resolve_moderator_model(cfg, "scriptwriter")),
+            platform=self.platform,
+        )
+        self._director = DirectorAgent(
+            llm_client=b(cfg.get("director", "gemini-2.5-flash")),
+            platform=self.platform,
+        )
+        self._creator = CreatorAgent(
+            llm_client=b(cfg.get("creator", "gemini-2.5-flash")),
+            platform=self.platform,
+        )
+        self._audit = AuditAgent(
+            llm_client=b(cfg.get("auditor", "gemini-2.5-flash")),
+            platform=self.platform,
+        )
+        self._reviser = ReviserAgent(
+            llm_client=b(cfg.get("reviser", "gemini-2.5-flash")),
+            platform=self.platform,
+        )
 
         self._agents_initialized = True
 

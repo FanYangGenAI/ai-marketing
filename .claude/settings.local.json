@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Shell(*)",
+      "RunInTerminal(*)",
+      "Bash(python run_planner.py --product 原语 --prd docs/PRD_v3.1.md)",
+      "WebFetch(domain:sypl.mindturi.com)",
+      "WebFetch(domain:gemini.google)"
+    ],
+    "autonomous": true
+  }
+}

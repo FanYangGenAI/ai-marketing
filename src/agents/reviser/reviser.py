@@ -23,6 +23,7 @@ from pathlib import Path
 from src.agents.base import AgentContext, AgentOutput, BaseAgent
 from src.llm.base import BaseLLMClient, LLMMessage
 from src.orchestrator.lesson_memory import LessonMemory
+from src.orchestrator.llm_temperatures import REVISER
 
 MAX_RETRIES = 2
 
@@ -44,12 +45,12 @@ _REVISER_SYSTEM = """你是一名内容修订指令生成专员（Reviser）。
 class ReviserAgent(BaseAgent):
     def __init__(
         self,
-        gemini_client: BaseLLMClient,
+        llm_client: BaseLLMClient,
         platform: str = "xiaohongshu",
     ):
         super().__init__(
             name="Reviser",
-            llm_client=gemini_client,
+            llm_client=llm_client,
             role_description="审计失败分类路由，生成修订指令并写入长期记忆",
         )
         self._platform = platform
@@ -180,7 +181,7 @@ class ReviserAgent(BaseAgent):
                 messages=messages,
                 system=_REVISER_SYSTEM,
                 max_tokens=1024,
-                temperature=0.3,
+                temperature=REVISER,
             )
             return response.content.strip()
         except Exception as e:

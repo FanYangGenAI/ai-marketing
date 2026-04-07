@@ -10,9 +10,9 @@ StrategistAgent — 每次 Pipeline 的强制第一步。
      并镜像到 campaigns/{product}/strategy_suggestion.md（全局「最新一份」）
 
 Debate 组成：
-  DataAnalyst    (Gemini)  ：分析历史经验数据、市场规律
-  StrategyReviewer (OpenAI) ：创意策略方向建议
-  StrategyModerator (Claude)：综合输出可执行的策略建议文档
+  DataAnalyst       ：分析历史经验数据、市场规律（模型见 llm_config strategy_analyst）
+  StrategyReviewer  ：创意策略方向建议（strategy_reviewer）
+  StrategyModerator   ：综合输出策略建议（moderator 或 strategy_moderator）
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from src.llm.base import BaseLLMClient
 from src.cold_start.retrieval import load_product_context_for_agents
 from src.orchestrator.debate import DebateAgent, debate_and_synthesize
 from src.orchestrator.lesson_memory import LessonMemory
+from src.orchestrator.llm_temperatures import DEBATE_STRATEGIST_PLANNER
 
 
 # ── System Prompts ─────────────────────────────────────────────────────────────
@@ -85,18 +86,18 @@ class StrategistAgent(BaseAgent):
 
     def __init__(
         self,
-        gemini_client: BaseLLMClient,   # DataAnalyst
-        openai_client: BaseLLMClient,   # StrategyReviewer
-        claude_client: BaseLLMClient,   # StrategyModerator
+        analyst_client: BaseLLMClient,
+        reviewer_client: BaseLLMClient,
+        moderator_client: BaseLLMClient,
         platform: str = "xiaohongshu",
     ):
         super().__init__(
             name="Strategist",
-            llm_client=claude_client,
+            llm_client=moderator_client,
             role_description="策略反思团队，每次 Pipeline 第一步，生成内容策略建议",
         )
-        self._gemini = gemini_client
-        self._openai = openai_client
+        self._analyst = analyst_client
+        self._reviewer = reviewer_client
         self._platform = platform
 
     async def run(self, context: AgentContext) -> AgentOutput:
@@ -131,8 +132,8 @@ class StrategistAgent(BaseAgent):
         )
 
         # ── Debate Agents ─────────────────────────────────────────────────────
-        analyst = DebateAgent("DataAnalyst（数据分析）", _ANALYST_SYSTEM, self._gemini)
-        reviewer = DebateAgent("StrategyReviewer（策略建议）", _REVIEWER_SYSTEM, self._openai)
+        analyst = DebateAgent("DataAnalyst（数据分析）", _ANALYST_SYSTEM, self._analyst)
+        reviewer = DebateAgent("StrategyReviewer（策略建议）", _REVIEWER_SYSTEM, self._reviewer)
 
         moderator_system = _MODERATOR_SYSTEM.replace("{date}", date_str)
 
@@ -148,6 +149,7 @@ class StrategistAgent(BaseAgent):
             moderator_system=moderator_system,
             max_rounds=2,  # 策略讨论 2 轮足够
             log_path=log_path,
+            temperature=DEBATE_STRATEGIST_PLANNER,
         )
 
         # ── 写入输出 ──────────────────────────────────────────────────────────

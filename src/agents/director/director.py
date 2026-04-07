@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 from src.agents.base import AgentContext, AgentOutput, BaseAgent
 from src.llm.base import BaseLLMClient, LLMMessage
 from src.orchestrator.asset_library import AssetLibrary
+from src.orchestrator.llm_temperatures import CREATIVE_SCRIPT_DIRECTOR_CREATOR
 
 
 _DIRECTOR_SYSTEM = """你是一名内容素材导演（Director）。
@@ -85,10 +86,10 @@ class DirectorAgent(BaseAgent):
     Director Agent：解析脚本 → 规划素材任务 → 调用 Skills → 返回素材清单。
     """
 
-    def __init__(self, gemini_client: BaseLLMClient, platform: str = "xiaohongshu"):
+    def __init__(self, llm_client: BaseLLMClient, platform: str = "xiaohongshu"):
         super().__init__(
             name="Director",
-            llm_client=gemini_client,
+            llm_client=llm_client,
             role_description="素材编排导演，调用 Skills 生成和处理图片素材",
         )
         self.platform = platform
@@ -155,7 +156,7 @@ class DirectorAgent(BaseAgent):
             messages=messages,
             system=_DIRECTOR_SYSTEM,
             max_tokens=16000,
-            temperature=0.3,
+            temperature=CREATIVE_SCRIPT_DIRECTOR_CREATOR,
         )
 
         return self._parse_task_list(response.content), response.content
